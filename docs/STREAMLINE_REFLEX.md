@@ -176,6 +176,7 @@ Place in `streamline/bin/x64/` (or same directory as `q2rtx.exe`):
 - `sl.common.dll`
 - `sl.reflex.dll`
 - `sl.pcl.dll`
+- `sl.imgui.dll` *(development builds only — see section 11)*
 
 The wrapper first tries `sl.interposer.dll` in the current directory, then `streamline\bin\x64\sl.interposer.dll`. Other DLLs must be loadable from the same directory (or PATH). If `sl.interposer.dll` is not found, Reflex is disabled and a single console message is printed.
 
@@ -216,3 +217,83 @@ CL_Frame()
 Key_Event(K_MOUSE1, down=true)
   └─ R_Reflex_TriggerFlash()  → ePCLatencyPing + eTriggerFlash
 ```
+
+---
+
+## 11. Streamline ImGUI Debugging
+
+The Streamline SDK includes an `sl.imgui` plugin that provides a real-time overlay for inspecting plugin state. This is invaluable for validating that Reflex is initialized, markers are firing, and sleep is behaving correctly.
+
+### Requirements
+
+`sl.imgui` is a **development-only** feature. It requires:
+
+1. **Development (non-production) DLLs** from `third/release/bin/x64/development/`. The production DLLs in `bin/x64/` do not include `sl.imgui.dll` and will never load it.
+2. **All SL DLLs must be the development versions** — the development `sl.interposer.dll` does not enforce signed-library checks on plugins. A production interposer will reject unsigned development plugin DLLs.
+3. **`sl.interposer.json`** placed next to `q2rtx.exe` with `"loadAllFeatures": true` to override the code's `featuresToLoad` and allow `sl.imgui` to load without code changes.
+
+### Setup
+
+Copy **development DLLs** from `third/release/bin/x64/development/` to the repo root (next to `q2rtx.exe`):
+
+| DLL | Purpose |
+|-----|---------|
+| `sl.interposer.dll` | Development interposer (loads unsigned plugins) |
+| `sl.common.dll` | Development common plugin |
+| `sl.reflex.dll` | Development Reflex plugin (exposes UI panel) |
+| `sl.pcl.dll` | Development PCL plugin |
+| `sl.imgui.dll` | ImGUI overlay plugin |
+
+Place **JSON config files** in the repo root:
+
+**`sl.interposer.json`** — enables all features and verbose logging:
+
+```json
+{
+    "loadAllFeatures": true,
+    "showConsole": true,
+    "logLevel": 2
+}
+```
+
+**`sl.common.json`** *(optional)* — disables OTA and configures hotkeys:
+
+```json
+{
+    "enableOTA": false,
+    "keys": [
+        { "alt": false, "ctrl": true, "shift": true, "key": 36, "id": "stats" },
+        { "alt": false, "ctrl": true, "shift": true, "key": 45, "id": "debug" }
+    ]
+}
+```
+
+### How It Works
+
+The `"loadAllFeatures": true` JSON override is processed by the Streamline plugin manager in non-production builds only (guarded by `#ifndef SL_PRODUCTION`). When active, it sets an internal `m_loadAllFeatures` flag that causes all discovered plugin DLLs to be loaded regardless of the `featuresToLoad` array set in code. No engine code changes are needed.
+
+### Usage
+
+1. Launch `q2rtx.exe` (via `.\dev.ps1 run` or directly)
+2. Press **`Ctrl + Shift + Home`** to toggle the ImGUI overlay
+3. The overlay appears on the right side of the screen with panels for each loaded plugin:
+   - **`sl.interposer`**: SDK build date, SL version
+   - **`sl.common`**: System info, GPU, driver, graphics API, VRAM
+   - **`sl.reflex`**: Current mode, FPS cap, marker usage, sleep time stats
+4. Hotkey reference is shown at the bottom of the screen
+
+### Mouse Interaction
+
+Q2RTX captures the mouse during gameplay. The ImGUI panels may not be mouse-interactive while playing. Use the hotkeys shown at the bottom of the overlay to navigate panels. Alternatively, open the game console or pause menu to release the cursor.
+
+### Reverting to Production
+
+To switch back to production DLLs:
+
+1. Delete `sl.interposer.json` and `sl.common.json` from the repo root
+2. Replace all `sl.*.dll` files with the production versions from `third/release/bin/x64/`
+3. Delete `sl.imgui.dll` (it does not exist in the production set)
+
+### Git Tracking
+
+The SL DLLs are already ignored by `*.dll` in `.gitignore`. The JSON debug config files (`sl.interposer.json`, `sl.common.json`, `sl.imgui.json`, `sl.reflex.json`) are also gitignored to prevent accidental commits of debug configuration.

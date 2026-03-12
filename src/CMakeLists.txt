@@ -530,6 +530,7 @@ IF (TARGET client)
                     sl.common.dll
                     sl.reflex.dll
                     sl.pcl.dll
+                    sl.imgui.dll
                 )
                 foreach(dll ${SL_DLLS})
                     if(EXISTS "${SL_BIN_DIR}/${dll}")
