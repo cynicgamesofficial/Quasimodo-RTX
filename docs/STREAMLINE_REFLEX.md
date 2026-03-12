@@ -6,9 +6,10 @@ This document describes how NVIDIA Reflex is integrated into Q2RTX using the **S
 
 ## 1. Overview
 
-- **API used:** Streamline Reflex + PCL (PC Latency) markers. No `NvLowLatencyVk.*`.
+- **API used:** Streamline Reflex + PCL (PC Latency) markers.  The underlying Vulkan low-latency driver interface uses `NvLowLatencyVk.dll` (loaded internally by Streamline's `sl.reflex` plugin).
 - **Integration mode:** Manual hooking (`eUseManualHooking`) with **dynamic loading** of `sl.interposer.dll`. If the DLL is missing, Reflex is disabled and the game runs normally.
 - **Vulkan hooks:** All mandatory Vulkan functions listed in `sl_hooks.h` (present, swapchain create/destroy/images/acquire, device wait idle, surface destroy) are routed through SL proxy functions resolved from `sl.interposer.dll`. This ensures `presentCommon()` fires every frame.
+- **Vulkan device extension:** `VK_NV_low_latency` is enabled as an optional device extension. Required by the Reflex Vulkan backend for driver-level low-latency mode on NVIDIA hardware.
 - **Platform:** Windows only (guarded by `#ifdef _WIN32` / `IF(WIN32)` where relevant).
 
 ---
@@ -118,6 +119,27 @@ create_swapchain()               ← uses SL_vkCreateSwapchainKHR proxy
 
 This satisfies the NVIDIA requirement that `slInit` is called **before** `vkCreateDevice`, and `slSetVulkanInfo` is called **after** device creation but **before** the first swapchain.
 
+### Vulkan Queue Registration (`slSetVulkanInfo`)
+
+Because Q2RTX uses manual hooking **without** `vkCreateDevice`/`vkCreateInstance` proxies, the engine must tell Streamline about the Vulkan queues via `sl::VulkanInfo`. The critical fields are:
+
+| Field | Value | Explanation |
+|---|---|---|
+| `graphicsQueueFamily` | `qvk.queue_idx_graphics` | The family index supporting graphics + compute + present |
+| `graphicsQueueIndex` | `1` | Number of host graphics queues (SL's own queues start at this index) |
+| `computeQueueFamily` | same as graphics | Q2RTX uses one family for both graphics and compute |
+| `computeQueueIndex` | `1` | Same count — one host queue in the shared family |
+
+**Why index = 1, not 0:** Streamline's internal `getHostQueueInfo()` uses `graphicsQueueIndex` as the `count` of host queues to enumerate when matching the VkQueue passed to `SL_vkQueuePresentKHR`. With count = 0, no queues are checked and the present queue is rejected as "not created by the application". Setting it to 1 means Streamline enumerates queue index 0, which is the host's actual graphics/present queue.
+
+### `VK_NV_low_latency` Extension
+
+The Streamline Reflex plugin requires `VK_NV_low_latency` on the Vulkan device. When using `vkCreateDevice` proxy, SL adds it automatically. In manual hooking mode, the host must enable it. Q2RTX adds it as an optional device extension — if the GPU advertises it, it is enabled during `vkCreateDevice`.
+
+### `NvLowLatencyVk.dll`
+
+Streamline's `sl.reflex` plugin for Vulkan loads `NvLowLatencyVk.dll` at runtime to interface with the NVIDIA driver's low-latency subsystem. This DLL must be present in the same directory as the other Streamline DLLs. Without it, `m_reflex` remains null inside the SL plugin, causing all Reflex operations to fail with "No reflex" and `lowLatencyAvailable` to stay false.
+
 ### Shutdown
 
 ```
@@ -178,6 +200,7 @@ Place in `streamline/bin/x64/` (or same directory as `q2rtx.exe`):
 - `sl.common.dll`
 - `sl.reflex.dll`
 - `sl.pcl.dll`
+- `NvLowLatencyVk.dll` — native Vulkan Reflex backend, loaded by `sl.reflex.dll`
 - `sl.imgui.dll` *(development builds only — see section 11)*
 
 The wrapper first tries `sl.interposer.dll` in the current directory, then `streamline\bin\x64\sl.interposer.dll`. Other DLLs must be loadable from the same directory (or PATH). If `sl.interposer.dll` is not found, Reflex is disabled and a single console message is printed.
@@ -188,8 +211,9 @@ The wrapper first tries `sl.interposer.dll` in the current directory, then `stre
 
 - **Sleep** at the very start of `CL_Frame`, before input. Frame token obtained before sleep.
 - **Flash marker** on **K_MOUSE1 down** only, unconditional (menus, pause, etc.).
-- **No** `NvLowLatencyVk.*` or standalone Reflex Vulkan SDK.
+- **`NvLowLatencyVk.dll`** is loaded by Streamline internally — the engine does not call it directly.
 - **No** GPU/vendor checks in engine code; only Streamline's reported state (e.g. `lowLatencyAvailable`) is used for UI.
+- **`VK_NV_low_latency`** enabled as optional device extension for driver-level low-latency support.
 - **All six timing markers** (SimStart/End, RenderStart/End, PresentStart/End) run every frame when Reflex is initialized, regardless of `cl_reflex` (latency measurement still needs them).
 - **`slReflexSetOptions`** called at least once during init and on every cvar change, even when mode is Off. **`useMarkersToOptimize`** is always set to `true` so the driver uses our PCL markers for optimization (ImGUI shows "Optimize with markers: Yes").
 - **All hooked Vulkan calls** routed through SL proxy to ensure `presentCommon()` fires.
@@ -245,6 +269,7 @@ Copy **development DLLs** from `third/release/bin/x64/development/` to the repo 
 | `sl.reflex.dll` | Development Reflex plugin (exposes UI panel) |
 | `sl.pcl.dll` | Development PCL plugin |
 | `sl.imgui.dll` | ImGUI overlay plugin |
+| `NvLowLatencyVk.dll` | Native Vulkan Reflex backend (same in dev and production) |
 
 Place **JSON config files** in the repo root:
 

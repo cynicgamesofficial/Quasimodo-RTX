@@ -10,10 +10,11 @@
 **Fixed Issues:**
 
   * Fixed Streamline Reflex ImGUI panel showing "Optimize with markers: No" — the wrapper now sets `sl::ReflexOptions::useMarkersToOptimize = true` so the Reflex plugin and driver use the application's PCL markers for sleep optimization.
+  * Fixed Streamline "Invalid VK queue" / "No reflex" on supported NVIDIA hardware — three root causes: `slSetVulkanInfo` queue index was 0 (Streamline uses it as host queue count, must be 1); `NvLowLatencyVk.dll` was missing from the runtime directory; `VK_NV_low_latency` Vulkan device extension was not enabled. All three are now fixed.
 
 **Misc Improvements:**
 
-  * Build: added `sl.imgui.dll` to the Streamline POST_BUILD copy list for development builds. Gitignore updated for Streamline JSON debug configs (`sl.interposer.json`, `sl.common.json`, etc.).
+  * Build: added `sl.imgui.dll` and `NvLowLatencyVk.dll` to the Streamline POST_BUILD copy list. Gitignore updated for Streamline JSON debug configs (`sl.interposer.json`, `sl.common.json`, etc.).
   * Documentation: `docs/STREAMLINE_REFLEX.md` — full Reflex integration notes, Vulkan proxy routing, frame flow, ImGUI debug setup, and design rules.
 
 ---
