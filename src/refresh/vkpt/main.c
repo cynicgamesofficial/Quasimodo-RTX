@@ -293,7 +293,7 @@ void vkpt_reset_accumulation()
 VkResult
 vkpt_initialize_all(VkptInitFlags_t init_flags)
 {
-	vkDeviceWaitIdle(qvk.device);
+	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
 
 	qvk.extent_render = get_render_extent();
 	qvk.extent_screen_images = get_screen_image_extent();
@@ -337,7 +337,7 @@ vkpt_initialize_all(VkptInitFlags_t init_flags)
 VkResult
 vkpt_destroy_all(VkptInitFlags_t destroy_flags)
 {
-	vkDeviceWaitIdle(qvk.device);
+	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
 
 	for(int i = LENGTH(vkpt_initialization) - 1; i >= 0; i--) {
 		VkptInit_t *init = vkpt_initialization + i;
@@ -730,15 +730,17 @@ create_swapchain(void)
 		.oldSwapchain          = VK_NULL_HANDLE, /* need to provide previous swapchain in case of window resize */
 	};
 
-	if(vkCreateSwapchainKHR(qvk.device, &swpch_create_info, NULL, &qvk.swap_chain) != VK_SUCCESS) {
+	PFN_vkCreateSwapchainKHR pfnCreateSC = SL_vkCreateSwapchainKHR ? SL_vkCreateSwapchainKHR : vkCreateSwapchainKHR;
+	if(pfnCreateSC(qvk.device, &swpch_create_info, NULL, &qvk.swap_chain) != VK_SUCCESS) {
 		Com_EPrintf("error creating swapchain\n");
 		return 1;
 	}
 
-	vkGetSwapchainImagesKHR(qvk.device, qvk.swap_chain, &qvk.num_swap_chain_images, NULL);
+	PFN_vkGetSwapchainImagesKHR pfnGetSCI = SL_vkGetSwapchainImagesKHR ? SL_vkGetSwapchainImagesKHR : vkGetSwapchainImagesKHR;
+	pfnGetSCI(qvk.device, qvk.swap_chain, &qvk.num_swap_chain_images, NULL);
 	assert(qvk.num_swap_chain_images);
 	qvk.swap_chain_images = malloc(qvk.num_swap_chain_images * sizeof(*qvk.swap_chain_images));
-	vkGetSwapchainImagesKHR(qvk.device, qvk.swap_chain, &qvk.num_swap_chain_images, qvk.swap_chain_images);
+	pfnGetSCI(qvk.device, qvk.swap_chain, &qvk.num_swap_chain_images, qvk.swap_chain_images);
 
 	qvk.swap_chain_image_views = malloc(qvk.num_swap_chain_images * sizeof(*qvk.swap_chain_image_views));
 	for(int i = 0; i < qvk.num_swap_chain_images; i++) {
@@ -1609,7 +1611,10 @@ destroy_swapchain(void)
 
 	qvk.num_swap_chain_images = 0;
 
-	vkDestroySwapchainKHR(qvk.device, qvk.swap_chain, NULL);
+	if (SL_vkDestroySwapchainKHR)
+		SL_vkDestroySwapchainKHR(qvk.device, qvk.swap_chain, NULL);
+	else
+		vkDestroySwapchainKHR(qvk.device, qvk.swap_chain, NULL);
 	qvk.swap_chain = VK_NULL_HANDLE;
 
 	return VK_SUCCESS;
@@ -1618,10 +1623,16 @@ destroy_swapchain(void)
 int
 destroy_vulkan(void)
 {
-	vkDeviceWaitIdle(qvk.device);
+	if (SL_vkDeviceWaitIdle)
+		SL_vkDeviceWaitIdle(qvk.device);
+	else
+		vkDeviceWaitIdle(qvk.device);
 
 	destroy_swapchain();
-	vkDestroySurfaceKHR(qvk.instance, qvk.surface,    NULL);
+	if (SL_vkDestroySurfaceKHR)
+		SL_vkDestroySurfaceKHR(qvk.instance, qvk.surface, NULL);
+	else
+		vkDestroySurfaceKHR(qvk.instance, qvk.surface, NULL);
 
 	for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
 	{
@@ -3349,7 +3360,7 @@ static void temporal_cvar_changed(cvar_t *self)
 static void
 recreate_swapchain(void)
 {
-	vkDeviceWaitIdle(qvk.device);
+	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
 	vkpt_destroy_all(VKPT_INIT_SWAPCHAIN_RECREATE);
 	destroy_swapchain();
 	SDL_Vulkan_GetDrawableSize(qvk.window, &qvk.draw_width, &qvk.draw_height);
@@ -3491,8 +3502,6 @@ R_BeginFrame_RTX(void)
 		}
 	}
 
-	SLReflex_BeginFrame();
-	reflex_frame_id = qvk.frame_counter;
 	SLReflex_Marker_SimStart(reflex_frame_id);
 	SLReflex_Marker_SimEnd(reflex_frame_id);
 	SLReflex_Marker_RenderStart(reflex_frame_id);
@@ -3555,8 +3564,11 @@ retry:;
 
 	VkResult res_swapchain = vkAcquireNextImage2KHR(qvk.device, &acquire_info, &qvk.current_swap_chain_image_index);
 #else
-	VkResult res_swapchain = vkAcquireNextImageKHR(qvk.device, qvk.swap_chain, ~((uint64_t) 0),
-		qvk.semaphores[qvk.current_frame_index][0].image_available, VK_NULL_HANDLE, &qvk.current_swap_chain_image_index);
+	VkResult res_swapchain = SL_vkAcquireNextImageKHR
+		? SL_vkAcquireNextImageKHR(qvk.device, qvk.swap_chain, ~((uint64_t) 0),
+			qvk.semaphores[qvk.current_frame_index][0].image_available, VK_NULL_HANDLE, &qvk.current_swap_chain_image_index)
+		: vkAcquireNextImageKHR(qvk.device, qvk.swap_chain, ~((uint64_t) 0),
+			qvk.semaphores[qvk.current_frame_index][0].image_available, VK_NULL_HANDLE, &qvk.current_swap_chain_image_index);
 #endif
 	if(res_swapchain == VK_ERROR_OUT_OF_DATE_KHR || res_swapchain == VK_SUBOPTIMAL_KHR) {
 		recreate_swapchain();
@@ -3567,7 +3579,10 @@ retry:;
 	}
 
 	if (qvk.wait_for_idle_frames) {
-		vkDeviceWaitIdle(qvk.device);
+		if (SL_vkDeviceWaitIdle)
+			SL_vkDeviceWaitIdle(qvk.device);
+		else
+			vkDeviceWaitIdle(qvk.device);
 		qvk.wait_for_idle_frames--;
 	}
 
@@ -3712,7 +3727,9 @@ R_EndFrame_RTX(void)
 	SLReflex_Marker_RenderEnd(reflex_frame_id);
 	SLReflex_Marker_PresentStart(reflex_frame_id);
 
-	VkResult res_present = vkQueuePresentKHR(qvk.queue_graphics, &present_info);
+	VkResult res_present = SL_vkQueuePresentKHR
+		? SL_vkQueuePresentKHR(qvk.queue_graphics, &present_info)
+		: vkQueuePresentKHR(qvk.queue_graphics, &present_info);
 	if(res_present == VK_ERROR_OUT_OF_DATE_KHR || res_present == VK_SUBOPTIMAL_KHR) {
 		recreate_swapchain();
 	}
@@ -3933,14 +3950,18 @@ R_Init_RTX(bool total)
 	IMG_GetPalette();
 	MOD_Init();
 	
+#ifdef _WIN32
+	SLReflex_PreInit();
+#endif
+
 	if(!init_vulkan()) {
 		Com_Error(ERR_FATAL, "Couldn't initialize Vulkan.\n");
 		return REF_TYPE_NONE;
 	}
 
 #ifdef _WIN32
-	SLReflex_Init(qvk.instance, qvk.physical_device, qvk.device,
-	              (uint32_t)qvk.queue_idx_graphics, 0);
+	SLReflex_PostInit(qvk.instance, qvk.physical_device, qvk.device,
+	                  (uint32_t)qvk.queue_idx_graphics, 0);
 #endif
 
 	_VK(create_command_pool_and_fences());
@@ -3979,7 +4000,7 @@ R_Shutdown_RTX(bool total)
 {
 	vkpt_freecam_reset();
 
-	vkDeviceWaitIdle(qvk.device);
+	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
 
 	// Persist current DRS scale
 	if (drs_current_scale != 0)
@@ -4337,7 +4358,7 @@ R_BeginRegistration_RTX(const char *name)
 	registration_sequence++;
 	LOG_FUNC();
 	Com_Printf("loading %s\n", name);
-	vkDeviceWaitIdle(qvk.device);
+	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
 
 	vkpt_fog_reset();
 
