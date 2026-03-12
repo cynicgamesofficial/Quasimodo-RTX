@@ -467,10 +467,15 @@ static const char *optional_instance_extension_name[NUM_OPTIONAL_INSTANCE_EXTENS
 #undef VK_OPT_EXT_DO
 };
 
+#ifndef VK_NV_LOW_LATENCY_EXTENSION_NAME
+#define VK_NV_LOW_LATENCY_EXTENSION_NAME "VK_NV_low_latency"
+#endif
+
 #define OPTIONAL_DEVICE_EXTENSIONS					\
 	VK_OPT_EXT_DO(VK_KHR_LINE_RASTERIZATION)		\
 	VK_OPT_EXT_DO(VK_KHR_SHADER_NON_SEMANTIC_INFO)	\
-	VK_OPT_EXT_DO(VK_EXT_DEBUG_MARKER)
+	VK_OPT_EXT_DO(VK_EXT_DEBUG_MARKER)				\
+	VK_OPT_EXT_DO(VK_NV_LOW_LATENCY)
 
 enum optional_device_extension_id
 {
@@ -3960,8 +3965,11 @@ R_Init_RTX(bool total)
 	}
 
 #ifdef _WIN32
+	/* graphicsQueueIndex = 1: Q2RTX creates 1 queue in the graphics family
+	   (at index 0), so Streamline's own queues would start at index 1.
+	   Internally SL uses this value as the host queue count for matching. */
 	SLReflex_PostInit(qvk.instance, qvk.physical_device, qvk.device,
-	                  (uint32_t)qvk.queue_idx_graphics, 0);
+	                  (uint32_t)qvk.queue_idx_graphics, 1);
 #endif
 
 	_VK(create_command_pool_and_fences());

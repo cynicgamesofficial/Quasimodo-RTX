@@ -253,6 +253,18 @@ extern "C" qboolean SLReflex_PostInit(VkInstance instance, VkPhysicalDevice phys
     vkInfo.physicalDevice      = physicalDevice;
     vkInfo.graphicsQueueFamily = graphicsQueueFamily;
     vkInfo.graphicsQueueIndex  = graphicsQueueIndex;
+    /*
+     * Q2RTX uses the graphics queue family for compute as well (the family
+     * supports both VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT).  Tell
+     * Streamline so it can match present/compute queues correctly.
+     */
+    vkInfo.computeQueueFamily  = graphicsQueueFamily;
+    vkInfo.computeQueueIndex   = graphicsQueueIndex;
+
+    Com_Printf("Streamline: slSetVulkanInfo — graphicsFamily=%u graphicsIndex=%u "
+               "computeFamily=%u computeIndex=%u\n",
+               vkInfo.graphicsQueueFamily, vkInfo.graphicsQueueIndex,
+               vkInfo.computeQueueFamily, vkInfo.computeQueueIndex);
 
     sl::Result res = p_slSetVulkanInfo(vkInfo);
     if (res != sl::Result::eOk) {

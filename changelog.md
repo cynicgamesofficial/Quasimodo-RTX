@@ -1,5 +1,23 @@
 # Quake II RTX Change Log
 
+## Unreleased
+
+**New Features:**
+
+  * **NVIDIA Reflex via Streamline** — Integrated NVIDIA Reflex low-latency mode using the Streamline SDK (manual hooking, dynamic loading). Reflex is optional: if `sl.interposer.dll` is missing, the game runs normally. New cvar `cl_reflex` (0 = Off, 1 = On, 2 = On + Boost). Sleep runs at the start of each frame; PCL markers (simulation, render, present) fire every frame for latency measurement.
+  * **Streamline ImGUI debugging** — When using development Streamline DLLs and `sl.interposer.json` with `loadAllFeatures: true`, the Streamline ImGUI overlay (Ctrl+Shift+Home) can be used to inspect Reflex state, marker usage, and sleep stats. See `docs/STREAMLINE_REFLEX.md` section 11.
+
+**Fixed Issues:**
+
+  * Fixed Streamline Reflex ImGUI panel showing "Optimize with markers: No" — the wrapper now sets `sl::ReflexOptions::useMarkersToOptimize = true` so the Reflex plugin and driver use the application's PCL markers for sleep optimization.
+
+**Misc Improvements:**
+
+  * Build: added `sl.imgui.dll` to the Streamline POST_BUILD copy list for development builds. Gitignore updated for Streamline JSON debug configs (`sl.interposer.json`, `sl.common.json`, etc.).
+  * Documentation: `docs/STREAMLINE_REFLEX.md` — full Reflex integration notes, Vulkan proxy routing, frame flow, ImGUI debug setup, and design rules.
+
+---
+
 ## 1.8.1
 
 **New Features:**
