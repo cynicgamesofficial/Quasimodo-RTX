@@ -37,6 +37,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "cameras.h"
 #include "physical_sky.h"
 #include "conversion.h"
+#include "streamline_reflex.h"
 #include "../../client/client.h"
 #include "../../client/ui/ui.h"
 
@@ -92,6 +93,8 @@ static bool drs_last_frame_world = false;
 
 cvar_t* cvar_min_driver_version_nvidia = NULL;
 cvar_t* cvar_min_driver_version_amd = NULL;
+cvar_t* cl_reflex = NULL;
+static ReflexMode last_reflex_mode = REFLEX_MODE_OFF;
 cvar_t *cvar_ray_tracing_api = NULL;
 cvar_t *cvar_vk_validation = NULL;
 
@@ -3480,6 +3483,20 @@ R_BeginFrame_RTX(void)
 {
 	LOG_FUNC();
 
+	if (sl_reflex.initialized && cl_reflex) {
+		ReflexMode want = (ReflexMode)Cvar_ClampInteger(cl_reflex, 0, 2);
+		if (want != last_reflex_mode) {
+			SLReflex_SetMode(want, 0);
+			last_reflex_mode = want;
+		}
+	}
+
+	SLReflex_BeginFrame();
+	reflex_frame_id = qvk.frame_counter;
+	SLReflex_Marker_SimStart(reflex_frame_id);
+	SLReflex_Marker_SimEnd(reflex_frame_id);
+	SLReflex_Marker_RenderStart(reflex_frame_id);
+
 	qvk.current_frame_index = qvk.frame_counter % MAX_FRAMES_IN_FLIGHT;
 
 	VkResult res_fence = vkWaitForFences(qvk.device, 1, qvk.fences_frame_sync + qvk.current_frame_index, VK_TRUE, ~((uint64_t) 0));
@@ -3692,10 +3709,16 @@ R_EndFrame_RTX(void)
 	}
 #endif
 
+	SLReflex_Marker_RenderEnd(reflex_frame_id);
+	SLReflex_Marker_PresentStart(reflex_frame_id);
+
 	VkResult res_present = vkQueuePresentKHR(qvk.queue_graphics, &present_info);
 	if(res_present == VK_ERROR_OUT_OF_DATE_KHR || res_present == VK_SUBOPTIMAL_KHR) {
 		recreate_swapchain();
 	}
+
+	SLReflex_Marker_PresentEnd(reflex_frame_id);
+
 	qvk.frame_counter++;
 }
 
@@ -3871,6 +3894,8 @@ R_Init_RTX(bool total)
 	// When nonzero, the Vulkan validation layer is requested
 	cvar_vk_validation = Cvar_Get("vk_validation", "0", CVAR_REFRESH | CVAR_ARCHIVE);
 
+	cl_reflex = Cvar_Get("cl_reflex", "1", CVAR_ARCHIVE);
+
 #if USE_DEBUG
 	// Testing: force a colored shell on all entities
 	cvar_pt_test_shell = Cvar_Get("pt_test_shell", "0", CVAR_CHEAT);
@@ -3912,6 +3937,11 @@ R_Init_RTX(bool total)
 		Com_Error(ERR_FATAL, "Couldn't initialize Vulkan.\n");
 		return REF_TYPE_NONE;
 	}
+
+#ifdef _WIN32
+	SLReflex_Init(qvk.instance, qvk.physical_device, qvk.device,
+	              (uint32_t)qvk.queue_idx_graphics, 0);
+#endif
 
 	_VK(create_command_pool_and_fences());
 	_VK(create_swapchain());
@@ -3974,6 +4004,10 @@ R_Shutdown_RTX(bool total)
 
 	_VK(vkpt_destroy_all(VKPT_INIT_DEFAULT));
 	vkpt_destroy_shader_modules();
+
+#ifdef _WIN32
+	SLReflex_Shutdown();
+#endif
 
 	if(destroy_vulkan()) {
 		Com_EPrintf("destroy_vulkan failed\n");
@@ -4577,6 +4611,18 @@ static bool R_IsHDR_RTX(void)
 	return qvk.surf_is_hdr;
 }
 
+static void R_Reflex_SleepAtFrameStart_RTX(void)
+{
+	if (sl_reflex.initialized)
+		SLReflex_Sleep();
+}
+
+static void R_Reflex_TriggerFlash_RTX(void)
+{
+	SLReflex_Marker_InputSample(reflex_frame_id);
+	SLReflex_Marker_TriggerFlash(reflex_frame_id);
+}
+
 void R_RegisterFunctionsRTX()
 {
 	R_Init = R_Init_RTX;
@@ -4611,6 +4657,8 @@ void R_RegisterFunctionsRTX()
 	R_AddDecal = R_AddDecal_RTX;
 	R_InterceptKey = R_InterceptKey_RTX;
 	R_IsHDR = R_IsHDR_RTX;
+	R_Reflex_SleepAtFrameStart = R_Reflex_SleepAtFrameStart_RTX;
+	R_Reflex_TriggerFlash = R_Reflex_TriggerFlash_RTX;
 	IMG_Load = IMG_Load_RTX;
 	IMG_Unload = IMG_Unload_RTX;
 	IMG_ReadPixels = IMG_ReadPixels_RTX;

@@ -351,6 +351,9 @@ extern void    (*R_AddDecal)(decal_t *d);
 extern bool    (*R_InterceptKey)(unsigned key, bool down);
 extern bool    (*R_IsHDR)(void);
 
+extern void    (*R_Reflex_SleepAtFrameStart)(void);
+extern void    (*R_Reflex_TriggerFlash)(void);
+
 #if REF_GL
 void R_RegisterFunctionsGL(void);
 #endif

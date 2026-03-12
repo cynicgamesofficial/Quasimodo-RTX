@@ -494,6 +494,9 @@ void(*R_AddDecal)(decal_t *d) = NULL;
 bool(*R_InterceptKey)(unsigned key, bool down) = NULL;
 bool(*R_IsHDR)(void) = NULL;
 
+void(*R_Reflex_SleepAtFrameStart)(void) = NULL;
+void(*R_Reflex_TriggerFlash)(void) = NULL;
+
 bool (*R_SupportsDebugLines)(void) = NULL;
 void (*R_AddDebugText_)(const vec3_t origin, const vec3_t angles, const char *text,
                         float size, uint32_t color, uint32_t time, bool depth_test) = NULL;

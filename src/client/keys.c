@@ -626,6 +626,11 @@ void Key_Event(unsigned key, bool down, unsigned time)
 
     Q_assert(key < 256);
 
+    if (key == K_MOUSE1 && down) {
+        if (R_Reflex_TriggerFlash)
+            R_Reflex_TriggerFlash();
+    }
+
     Com_DDDPrintf("%u: %c%s\n", time,
                   down ? '+' : '-', Key_KeynumToString(key));
 

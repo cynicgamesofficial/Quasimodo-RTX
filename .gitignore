@@ -41,6 +41,9 @@ music/
 *.wal
 *.wav
 
+streamline/bin/
+streamline/lib/
+
 q2config.cfg
 save
 */docs

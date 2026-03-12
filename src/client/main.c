@@ -3245,6 +3245,9 @@ unsigned CL_Frame(unsigned msec)
         return UINT_MAX;
     }
 
+    if (cls.ref_initialized && R_Reflex_SleepAtFrameStart)
+        R_Reflex_SleepAtFrameStart();
+
     main_extra += msec;
     cls.realtime += msec;
 

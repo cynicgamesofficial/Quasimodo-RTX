@@ -286,6 +286,12 @@ SET(SRC_VKPT
 	refresh/vkpt/conversion.c
 )
 
+IF(WIN32)
+	SET(SRC_VKPT_STREAMLINE
+		refresh/vkpt/streamline_reflex.cpp
+	)
+ENDIF()
+
 SET(HEADERS_VKPT
 	refresh/vkpt/vkpt.h
 	refresh/vkpt/vk_util.h
@@ -297,6 +303,7 @@ SET(HEADERS_VKPT
 	refresh/vkpt/physical_sky.h
 	refresh/vkpt/precomputed_sky.h
 	refresh/vkpt/conversion.h
+	refresh/vkpt/streamline_reflex.h
 )
 
 set(SRC_SHADERS
@@ -508,6 +515,35 @@ IF (TARGET client)
         TARGET_LINK_LIBRARIES(client vulkan-1)
         ELSE ()
         TARGET_LINK_LIBRARIES(client vulkan)
+        ENDIF()
+
+        # Streamline SDK (Reflex) – Windows only
+        IF(WIN32)
+            set(STREAMLINE_SDK_DIR "${CMAKE_SOURCE_DIR}/../third/release" CACHE PATH "Streamline SDK root")
+            IF(EXISTS "${STREAMLINE_SDK_DIR}/include/sl.h")
+                TARGET_SOURCES(client PRIVATE ${SRC_VKPT_STREAMLINE})
+                TARGET_INCLUDE_DIRECTORIES(client PRIVATE "${STREAMLINE_SDK_DIR}/include")
+
+                set(SL_BIN_DIR "${CMAKE_SOURCE_DIR}/streamline/bin/x64")
+                set(SL_DLLS
+                    sl.interposer.dll
+                    sl.common.dll
+                    sl.reflex.dll
+                    sl.pcl.dll
+                )
+                foreach(dll ${SL_DLLS})
+                    if(EXISTS "${SL_BIN_DIR}/${dll}")
+                        add_custom_command(TARGET client POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${SL_BIN_DIR}/${dll}"
+                                "${CMAKE_SOURCE_DIR}/${dll}"
+                            COMMENT "Copying ${dll} to runtime directory"
+                        )
+                    endif()
+                endforeach()
+            ELSE()
+                MESSAGE(STATUS "Streamline SDK not found at ${STREAMLINE_SDK_DIR} – Reflex disabled at compile time")
+            ENDIF()
         ENDIF()
     ENDIF()
 
