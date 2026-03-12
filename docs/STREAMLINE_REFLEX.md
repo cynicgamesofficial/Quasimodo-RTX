@@ -156,6 +156,8 @@ When `SL_vk*` is NULL (SL not loaded), native Vulkan functions are used as fallb
 
 Applied at the start of each `R_BeginFrame_RTX()` when the cvar value changes. `slReflexSetOptions` is called at initialization and on every cvar change, including when set to Off (per NVIDIA requirement).
 
+**Reflex options:** The wrapper always sets `sl::ReflexOptions::useMarkersToOptimize = true` when calling `slReflexSetOptions` (both at init and on mode change). This tells the Reflex plugin and driver to use the application's PCL markers for sleep optimization; the Streamline ImGUI Reflex panel will show "Optimize with markers: Yes" when this is active. Because Q2RTX sends all six timing markers every frame with a single frame token, marker-based optimization is valid.
+
 ---
 
 ## 8. Build and Runtime
@@ -189,7 +191,7 @@ The wrapper first tries `sl.interposer.dll` in the current directory, then `stre
 - **No** `NvLowLatencyVk.*` or standalone Reflex Vulkan SDK.
 - **No** GPU/vendor checks in engine code; only Streamline's reported state (e.g. `lowLatencyAvailable`) is used for UI.
 - **All six timing markers** (SimStart/End, RenderStart/End, PresentStart/End) run every frame when Reflex is initialized, regardless of `cl_reflex` (latency measurement still needs them).
-- **`slReflexSetOptions`** called at least once during init and on every cvar change, even when mode is Off.
+- **`slReflexSetOptions`** called at least once during init and on every cvar change, even when mode is Off. **`useMarkersToOptimize`** is always set to `true` so the driver uses our PCL markers for optimization (ImGUI shows "Optimize with markers: Yes").
 - **All hooked Vulkan calls** routed through SL proxy to ensure `presentCommon()` fires.
 - **Renderer callbacks** only: client never calls Streamline directly.
 
