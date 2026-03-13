@@ -159,8 +159,9 @@ static inline void enqueue_stretch_pic(
 		}
 	}
 
-	float width = r_config.width * draw.scale;
-	float height = r_config.height * draw.scale;
+	VkExtent2D draw_extent = vkpt_draw_get_extent();
+	float width = (float)max(1u, draw_extent.width) * draw.scale;
+	float height = (float)max(1u, draw_extent.height) * draw.scale;
 
 	x = 2.0f * x / width - 1.0f;
 	y = 2.0f * y / height - 1.0f;

@@ -142,6 +142,7 @@ static int dlss_forced_render_height = 0;
 static bool dlss_forced_render_from_optimal = false;
 static bool dlss_eval_path_logged = false;
 static bool dlss_eval_failure_logged = false;
+static bool dlss_hdr_input_logged = false;
 
 static float sky_rotation = 0.f;
 static int sky_autorotate = 0;
@@ -857,6 +858,17 @@ create_swapchain(void)
 		qvk.extent_unscaled.width = max(surf_capabilities.minImageExtent.width, qvk.extent_unscaled.width);
 		qvk.extent_unscaled.height = max(surf_capabilities.minImageExtent.height, qvk.extent_unscaled.height);
 	}
+
+	if ((uint32_t)r_config.width != qvk.extent_unscaled.width || (uint32_t)r_config.height != qvk.extent_unscaled.height)
+	{
+		Com_Printf("Video: syncing output dimensions to swapchain extent %ux%u (requested %dx%d).\n",
+			qvk.extent_unscaled.width, qvk.extent_unscaled.height, r_config.width, r_config.height);
+	}
+
+	qvk.draw_width = (int)qvk.extent_unscaled.width;
+	qvk.draw_height = (int)qvk.extent_unscaled.height;
+	r_config.width = qvk.draw_width;
+	r_config.height = qvk.draw_height;
 
 	uint32_t num_images = max(surf_capabilities.minImageCount, 2);
 	if(surf_capabilities.maxImageCount > 0)
@@ -3627,8 +3639,15 @@ R_RenderFrame_RTX(refdef_t *fd)
 			dlss_params.camera_aspect_ratio = (float)qvk.extent_unscaled.width / (float)max(1u, qvk.extent_unscaled.height);
 			dlss_params.quality = vkpt_get_dlss_quality();
 			dlss_params.reset = (dlss_reset_pending || !temporal_frame_valid) ? qtrue : qfalse;
-			dlss_params.hdr = qvk.surf_is_hdr ? qtrue : qfalse;
+			// DLSS is evaluated pre-tonemap from FP16 scene color and must be treated as HDR.
+			dlss_params.hdr = qtrue;
 			dlss_params.use_auto_exposure = qtrue;
+
+			if (!dlss_hdr_input_logged)
+			{
+				Com_Printf("DLSS: using pre-tonemap HDR scene color input.\n");
+				dlss_hdr_input_logged = true;
+			}
 
 			if (!SLDLSS_Evaluate(&dlss_params))
 			{
@@ -3876,6 +3895,7 @@ R_BeginFrame_RTX(void)
 		int clamped_quality = max(0, min(3, dlss_quality));
 		Com_Printf("DLSS: %s (mode=%s).\n", dlss_enable ? "enabled" : "disabled", dlss_quality_names[clamped_quality]);
 		dlss_reset_pending = true;
+		dlss_hdr_input_logged = false;
 		dlss_last_enable = dlss_enable;
 		dlss_last_quality = dlss_quality;
 	}
