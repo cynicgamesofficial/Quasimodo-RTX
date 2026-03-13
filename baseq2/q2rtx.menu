@@ -132,6 +132,7 @@ begin video
     values "fov scaling" cl_adjustfov vert- hor+
     pairs "full screen display" vid_display $vid_displaylist
     toggle "vertical sync" vid_vsync
+    pairs "NVIDIA Reflex" cl_reflex "Off" 0 "On" 1 "On + Boost" 2
     pairs "FPS counter" scr_fps "off" 0 "show FPS" 1 "show FPS and resolution scale" 2
     range -f "%.0f deg" "field of view" fov 60 160 5
     blank
