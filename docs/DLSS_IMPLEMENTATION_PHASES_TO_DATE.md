@@ -1,6 +1,6 @@
 # Q2RTX DLSS SR Integration: Completed Phases and Finalization Roadmap
 
-Date: 2026-03-13  
+Date: 2026-03-14  
 Workspace: `D:\DISILLUSION\DE- ENGINES\Q2RTX`
 
 ## Scope
@@ -80,7 +80,7 @@ Primary file:
 
 - `src/refresh/vkpt/streamline_reflex.cpp`
 
-### Phase 4 - Resolution Policy Stabilization + Menu Cleanup (current)
+### Phase 4 - Resolution Policy Stabilization + Menu Cleanup
 
 This phase addressed a key debugging/behavior issue: DLSS-active sizing could fall back into legacy fixed/DRS policy when optimal settings were not available in a frame.
 
@@ -102,6 +102,35 @@ Primary file changes:
 
 - `src/refresh/vkpt/main.c`
 - `baseq2/q2rtx.menu`
+
+### Phase 5 - Fullscreen Offset + HDR Input Semantics Hardening
+
+This phase targeted two post-bring-up correctness bugs:
+
+- fullscreen image shifted bottom-right in some fullscreen mode paths
+- burned directional-light/sky behavior in lower DLSS presets
+
+Implemented changes:
+
+- Synchronized `r_config`/draw dimensions to the actual Vulkan swapchain extent
+- Updated 2D/stretch-pic coordinate normalization to use actual draw extent instead of requested config size
+- Forced DLSS input classification to HDR at the pre-tonemap seam
+- Added focused diagnostics for swapchain size coercion and HDR DLSS input mode
+
+Primary file changes:
+
+- `src/refresh/vkpt/main.c`
+- `src/refresh/vkpt/draw.c`
+
+### Phase 6 - Motion Vector Metadata Hardening (in progress)
+
+Implemented change:
+
+- Marked DLSS motion vectors as jittered in Streamline constants (`motionVectorsJittered = true`) to match Q2RTX primary-ray motion generation semantics.
+
+Primary file change:
+
+- `src/refresh/vkpt/streamline_reflex.cpp`
 
 ## Current Technical State (What is Working)
 
@@ -135,6 +164,11 @@ DLSS-active sizing is now coherent:
 - Output size = swapchain/display size
 - Render size = DLSS optimal render size (or explicit native fallback)
 - Allocation size = tracked separately and logged distinctly
+
+### Fullscreen and Exposure Correctness (now)
+
+- Fullscreen and windowed output paths now use swapchain-authoritative extents consistently for presentation and UI normalization.
+- DLSS seam input is explicitly treated as pre-tonemap HDR scene color.
 
 ## What Is Still Provisional / Not Final
 
@@ -249,6 +283,9 @@ Exit criteria:
 - DLSS-active resolution policy stabilization
 - Old FSR-facing menu controls hidden
 - Resolution submenu entry with old fixed/dynamic scale controls hidden
+- Fullscreen extent mismatch and bottom-right offset class addressed
+- DLSS pre-tonemap HDR input semantics corrected
+- DLSS motion-vector jitter metadata aligned with renderer behavior
 
 ### Left
 
@@ -259,9 +296,9 @@ Exit criteria:
 
 ## Recommended Immediate Next Work Order
 
-1. Depth semantics validation and correction
-2. Motion vector + jitter conformance validation
-3. Exposure policy decision (auto-only vs explicit handoff)
+1. Depth semantics validation and correction (especially sky/background behavior)
+2. Motion-vector quality validation sweep across low DLSS presets
+3. Exposure policy decision (auto-only vs explicit handoff texture)
 4. Reset event coverage audit
 5. Per-map artifact sweep with capture protocol
 6. Final UI mode/status polish

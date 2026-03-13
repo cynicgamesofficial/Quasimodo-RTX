@@ -839,7 +839,8 @@ extern "C" qboolean SLDLSS_Evaluate(const streamline_dlss_evaluate_params_t *par
     consts.cameraMotionIncluded = sl::Boolean::eTrue;
     consts.motionVectors3D = sl::Boolean::eFalse;
     consts.motionVectorsDilated = sl::Boolean::eFalse;
-    consts.motionVectorsJittered = sl::Boolean::eFalse;
+    // Primary-ray motion vectors are derived from jittered current/previous projections.
+    consts.motionVectorsJittered = sl::Boolean::eTrue;
     consts.reset = params->reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.orthographicProjection = sl::Boolean::eFalse;
 
