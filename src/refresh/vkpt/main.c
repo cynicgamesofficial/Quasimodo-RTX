@@ -139,6 +139,7 @@ static int dlss_last_enable = 0;
 static int dlss_last_quality = 0;
 static int dlss_forced_render_width = 0;
 static int dlss_forced_render_height = 0;
+static bool dlss_forced_render_from_optimal = false;
 static bool dlss_eval_path_logged = false;
 static bool dlss_eval_failure_logged = false;
 
@@ -274,21 +275,46 @@ static qboolean vkpt_dlss_active(void)
 
 static void vkpt_dlss_update_forced_render_size(void)
 {
-	dlss_forced_render_width = 0;
-	dlss_forced_render_height = 0;
+	static bool warned_optimal_unavailable = false;
+
+	dlss_forced_render_from_optimal = false;
 
 	if (!vkpt_dlss_active())
+	{
+		dlss_forced_render_width = 0;
+		dlss_forced_render_height = 0;
+		warned_optimal_unavailable = false;
 		return;
+	}
+
+	dlss_forced_render_width = (int)max(1u, qvk.extent_unscaled.width);
+	dlss_forced_render_height = (int)max(1u, qvk.extent_unscaled.height);
 
 	uint32_t render_w = 0, render_h = 0;
 	if (!SLDLSS_GetOptimalSettings(vkpt_get_dlss_quality(), qvk.extent_unscaled.width, qvk.extent_unscaled.height, &render_w, &render_h))
+	{
+		if (!warned_optimal_unavailable)
+		{
+			Com_WPrintf("DLSS: optimal settings unavailable, using native render extent as fallback.\n");
+			warned_optimal_unavailable = true;
+		}
 		return;
+	}
 
 	if (render_w == 0 || render_h == 0)
+	{
+		if (!warned_optimal_unavailable)
+		{
+			Com_WPrintf("DLSS: optimal settings returned invalid extent, using native render extent as fallback.\n");
+			warned_optimal_unavailable = true;
+		}
 		return;
+	}
 
 	dlss_forced_render_width = (int)render_w;
 	dlss_forced_render_height = (int)render_h;
+	dlss_forced_render_from_optimal = true;
+	warned_optimal_unavailable = false;
 }
 
 static inline bool extents_equal(VkExtent2D a, VkExtent2D b)
@@ -298,11 +324,11 @@ static inline bool extents_equal(VkExtent2D a, VkExtent2D b)
 
 static VkExtent2D get_render_extent(void)
 {
-	if (vkpt_dlss_active() && dlss_forced_render_width > 0 && dlss_forced_render_height > 0)
+	if (vkpt_dlss_active())
 	{
 		VkExtent2D result = {
-			.width = (uint32_t)dlss_forced_render_width,
-			.height = (uint32_t)dlss_forced_render_height
+			.width = (uint32_t)max(1, dlss_forced_render_width),
+			.height = (uint32_t)max(1, dlss_forced_render_height)
 		};
 		result.width = (result.width + 1) & ~1;
 		return result;
@@ -330,6 +356,47 @@ static VkExtent2D get_render_extent(void)
 	result.width = (result.width + 1) & ~1;
 
 	return result;
+}
+
+static void vkpt_dlss_log_sizing_state(VkExtent2D output_extent, VkExtent2D render_extent, VkExtent2D allocation_extent)
+{
+	static bool has_last = false;
+	static bool warned_legacy_controls = false;
+	static VkExtent2D last_output = { 0 };
+	static VkExtent2D last_render = { 0 };
+	static VkExtent2D last_alloc = { 0 };
+
+	if (!vkpt_dlss_active())
+	{
+		has_last = false;
+		warned_legacy_controls = false;
+		return;
+	}
+
+	if (!warned_legacy_controls && (cvar_drs_enable->integer != 0 || scr_viewsize->integer != 100))
+	{
+		Com_Printf("DLSS: ignoring legacy fixed/dynamic resolution scale controls while active.\n");
+		warned_legacy_controls = true;
+	}
+
+	if (has_last &&
+		extents_equal(last_output, output_extent) &&
+		extents_equal(last_render, render_extent) &&
+		extents_equal(last_alloc, allocation_extent))
+	{
+		return;
+	}
+
+	Com_Printf("DLSS sizing: output=%ux%u render=%ux%u alloc=%ux%u source=%s.\n",
+		output_extent.width, output_extent.height,
+		render_extent.width, render_extent.height,
+		allocation_extent.width, allocation_extent.height,
+		dlss_forced_render_from_optimal ? "optimal" : "native_fallback");
+
+	last_output = output_extent;
+	last_render = render_extent;
+	last_alloc = allocation_extent;
+	has_last = true;
 }
 
 static VkExtent2D get_screen_image_extent(void)
@@ -3840,6 +3907,9 @@ R_BeginFrame_RTX(void)
 	}
 
 	drs_process();
+	qvk.extent_render = get_render_extent();
+	qvk.gpu_slice_width = (qvk.extent_render.width + qvk.device_count - 1) / qvk.device_count;
+
 	if (vkpt_refdef.fd)
 	{
 		if (vkpt_dlss_active())
@@ -3852,11 +3922,9 @@ R_BeginFrame_RTX(void)
 			vkpt_refdef.fd->feedback.resolution_scale = (drs_effective_scale != 0) ? drs_effective_scale : scr_viewsize->integer;
 		}
 	}
-
-	qvk.extent_render = get_render_extent();
-	qvk.gpu_slice_width = (qvk.extent_render.width + qvk.device_count - 1) / qvk.device_count;
 	
 	VkExtent2D extent_screen_images = get_screen_image_extent();
+	vkpt_dlss_log_sizing_state(qvk.extent_unscaled, qvk.extent_render, extent_screen_images);
 
 	if(!extents_equal(extent_screen_images, qvk.extent_screen_images) || (!!cvar_hdr->integer != qvk.surf_is_hdr) || (!!cvar_vsync->integer != qvk.surf_vsync))
 	{
