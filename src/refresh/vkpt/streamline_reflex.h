@@ -15,10 +15,7 @@
 #define STREAMLINE_REFLEX_H
 
 #include "shared/shared.h"
-
-#ifdef _WIN32
 #include <vulkan/vulkan.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,6 +34,79 @@ typedef struct {
     ReflexMode mode;
     uint64_t  frameCounter;
 } streamline_reflex_state_t;
+
+typedef enum {
+    SL_DLSS_QUALITY_QUALITY = 0,
+    SL_DLSS_QUALITY_BALANCED = 1,
+    SL_DLSS_QUALITY_PERFORMANCE = 2,
+    SL_DLSS_QUALITY_ULTRA_PERFORMANCE = 3,
+} streamline_dlss_quality_t;
+
+typedef struct {
+    qboolean available;
+    uint32_t num_instance_extensions;
+    const char **instance_extensions;
+    uint32_t num_device_extensions;
+    const char **device_extensions;
+    uint32_t num_features12;
+    const char **features12;
+    uint32_t num_features13;
+    const char **features13;
+    uint32_t num_graphics_queues_required;
+    uint32_t num_compute_queues_required;
+} streamline_vk_requirements_t;
+
+typedef struct {
+    VkCommandBuffer cmd_buf;
+
+    VkImage color_input;
+    VkImageView color_input_view;
+    VkFormat color_input_format;
+    uint32_t color_input_width;
+    uint32_t color_input_height;
+
+    VkImage color_output;
+    VkImageView color_output_view;
+    VkFormat color_output_format;
+    uint32_t color_output_width;
+    uint32_t color_output_height;
+
+    VkImage depth;
+    VkImageView depth_view;
+    VkFormat depth_format;
+    uint32_t depth_width;
+    uint32_t depth_height;
+
+    VkImage motion_vectors;
+    VkImageView motion_vectors_view;
+    VkFormat motion_vectors_format;
+    uint32_t motion_vectors_width;
+    uint32_t motion_vectors_height;
+
+    float camera_view_to_clip[16];
+    float clip_to_camera_view[16];
+    float clip_to_prev_clip[16];
+    float prev_clip_to_clip[16];
+
+    float camera_pos[3];
+    float camera_up[3];
+    float camera_right[3];
+    float camera_fwd[3];
+
+    float jitter_offset_x;
+    float jitter_offset_y;
+    float mvec_scale_x;
+    float mvec_scale_y;
+    float camera_near;
+    float camera_far;
+    float camera_fov;
+    float camera_aspect_ratio;
+
+    streamline_dlss_quality_t quality;
+    qboolean reset;
+    qboolean hdr;
+    qboolean use_auto_exposure;
+} streamline_dlss_evaluate_params_t;
 
 extern streamline_reflex_state_t sl_reflex;
 extern uint64_t reflex_frame_id;
@@ -75,10 +145,16 @@ void     SLReflex_Marker_TriggerFlash(uint64_t frameId);
 
 qboolean SLReflex_IsLowLatencyAvailable(void);
 
+qboolean SLDLSS_IsAvailable(void);
+qboolean SLDLSS_GetVulkanRequirements(streamline_vk_requirements_t *requirements);
+qboolean SLDLSS_GetOptimalSettings(streamline_dlss_quality_t quality, uint32_t output_width, uint32_t output_height,
+                                   uint32_t *render_width, uint32_t *render_height);
+qboolean SLDLSS_Evaluate(const streamline_dlss_evaluate_params_t *params);
+
 /*
  * Vulkan proxy function pointers resolved from sl.interposer.dll.
  * When non-NULL the engine MUST use these instead of the loader-resolved
- * versions for the calls listed in sl_hooks.h — otherwise presentCommon()
+ * versions for the calls listed in sl_hooks.h -- otherwise presentCommon()
  * is never invoked and Streamline cannot function.
  *
  * When NULL (SL not loaded) the engine falls back to its normal Vulkan calls.

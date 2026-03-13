@@ -97,6 +97,8 @@ cvar_t* cl_reflex = NULL;
 static ReflexMode last_reflex_mode = REFLEX_MODE_OFF;
 cvar_t *cvar_ray_tracing_api = NULL;
 cvar_t *cvar_vk_validation = NULL;
+cvar_t *cvar_pt_dlss = NULL;
+cvar_t *cvar_pt_dlss_quality = NULL;
 
 #if USE_DEBUG
 cvar_t *cvar_pt_test_shell = NULL;
@@ -132,6 +134,13 @@ static image_t *water_normal_texture = NULL;
 int num_accumulated_frames = 0;
 
 static bool frame_ready = false;
+static bool dlss_reset_pending = true;
+static int dlss_last_enable = 0;
+static int dlss_last_quality = 0;
+static int dlss_forced_render_width = 0;
+static int dlss_forced_render_height = 0;
+static bool dlss_eval_path_logged = false;
+static bool dlss_eval_failure_logged = false;
 
 static float sky_rotation = 0.f;
 static int sky_autorotate = 0;
@@ -229,6 +238,59 @@ static void accumulation_cvar_changed(cvar_t* self)
 	num_accumulated_frames = 0;
 }
 
+static void dlss_cvar_changed(cvar_t* self)
+{
+	if (self == cvar_pt_dlss)
+		Cvar_ClampInteger(self, 0, 1);
+	else if (self == cvar_pt_dlss_quality)
+		Cvar_ClampInteger(self, 0, 3);
+	(void)self;
+	dlss_reset_pending = true;
+}
+
+static qboolean vkpt_dlss_requested(void)
+{
+	return (cvar_pt_dlss && cvar_pt_dlss->integer != 0) ? qtrue : qfalse;
+}
+
+static streamline_dlss_quality_t vkpt_get_dlss_quality(void)
+{
+	int quality = cvar_pt_dlss_quality ? cvar_pt_dlss_quality->integer : 0;
+	quality = max(0, min(3, quality));
+	switch (quality)
+	{
+	default:
+	case 0: return SL_DLSS_QUALITY_QUALITY;
+	case 1: return SL_DLSS_QUALITY_BALANCED;
+	case 2: return SL_DLSS_QUALITY_PERFORMANCE;
+	case 3: return SL_DLSS_QUALITY_ULTRA_PERFORMANCE;
+	}
+}
+
+static qboolean vkpt_dlss_active(void)
+{
+	return (vkpt_dlss_requested() && SLDLSS_IsAvailable()) ? qtrue : qfalse;
+}
+
+static void vkpt_dlss_update_forced_render_size(void)
+{
+	dlss_forced_render_width = 0;
+	dlss_forced_render_height = 0;
+
+	if (!vkpt_dlss_active())
+		return;
+
+	uint32_t render_w = 0, render_h = 0;
+	if (!SLDLSS_GetOptimalSettings(vkpt_get_dlss_quality(), qvk.extent_unscaled.width, qvk.extent_unscaled.height, &render_w, &render_h))
+		return;
+
+	if (render_w == 0 || render_h == 0)
+		return;
+
+	dlss_forced_render_width = (int)render_w;
+	dlss_forced_render_height = (int)render_h;
+}
+
 static inline bool extents_equal(VkExtent2D a, VkExtent2D b)
 {
 	return a.width == b.width && a.height == b.height;
@@ -236,6 +298,16 @@ static inline bool extents_equal(VkExtent2D a, VkExtent2D b)
 
 static VkExtent2D get_render_extent(void)
 {
+	if (vkpt_dlss_active() && dlss_forced_render_width > 0 && dlss_forced_render_height > 0)
+	{
+		VkExtent2D result = {
+			.width = (uint32_t)dlss_forced_render_width,
+			.height = (uint32_t)dlss_forced_render_height
+		};
+		result.width = (result.width + 1) & ~1;
+		return result;
+	}
+
 	int scale;
 	if(drs_effective_scale)
 	{
@@ -262,6 +334,15 @@ static VkExtent2D get_render_extent(void)
 
 static VkExtent2D get_screen_image_extent(void)
 {
+	if (vkpt_dlss_active())
+	{
+		VkExtent2D result;
+		result.width = max(qvk.extent_unscaled.width, (uint32_t)max(1, dlss_forced_render_width));
+		result.height = max(qvk.extent_unscaled.height, (uint32_t)max(1, dlss_forced_render_height));
+		result.width = (result.width + 1) & ~1;
+		return result;
+	}
+
 	VkExtent2D result;
 	if (cvar_drs_enable->integer)
 	{
@@ -295,6 +376,7 @@ vkpt_initialize_all(VkptInitFlags_t init_flags)
 {
 	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
 
+	vkpt_dlss_update_forced_render_size();
 	qvk.extent_render = get_render_extent();
 	qvk.extent_screen_images = get_screen_image_extent();
 
@@ -871,10 +953,57 @@ append_string_list(const char** dst, uint32_t* dst_count, uint32_t dst_capacity,
 	*dst_count += src_count;
 }
 
+static qboolean
+string_list_contains(const char** list, uint32_t list_count, const char* value)
+{
+	for (uint32_t i = 0; i < list_count; ++i)
+	{
+		if (!strcmp(list[i], value))
+			return qtrue;
+	}
+	return qfalse;
+}
+
+static void
+append_unique_string_list(const char** dst, uint32_t* dst_count, uint32_t dst_capacity, const char** src, uint32_t src_count)
+{
+	for (uint32_t i = 0; i < src_count; ++i)
+	{
+		if (!string_list_contains(dst, *dst_count, src[i]))
+		{
+			assert(*dst_count < dst_capacity);
+			dst[*dst_count] = src[i];
+			(*dst_count)++;
+		}
+	}
+}
+
+static void
+apply_streamline_vk12_features(VkPhysicalDeviceVulkan12Features* vk12, const streamline_vk_requirements_t* req)
+{
+	if (!vk12 || !req || !req->available)
+		return;
+
+	for (uint32_t i = 0; i < req->num_features12; ++i)
+	{
+		const char* name = req->features12[i];
+		if (!strcmp(name, "timelineSemaphore"))
+			vk12->timelineSemaphore = VK_TRUE;
+		else if (!strcmp(name, "descriptorIndexing"))
+			vk12->descriptorIndexing = VK_TRUE;
+		else if (!strcmp(name, "bufferDeviceAddress"))
+			vk12->bufferDeviceAddress = VK_TRUE;
+		else
+			Com_WPrintf("Streamline DLSS: unsupported Vulkan 1.2 feature request '%s' (ignored in phase 1).\n", name);
+	}
+}
+
 bool
 init_vulkan(void)
 {
 	Com_Printf("----- init_vulkan -----\n");
+	streamline_vk_requirements_t sl_vk_req = { 0 };
+	qboolean has_sl_vk_req = SLDLSS_GetVulkanRequirements(&sl_vk_req);
 
 	/* layers */
 	get_vk_layer_list(&qvk.num_layers, &qvk.layers);
@@ -901,18 +1030,28 @@ init_vulkan(void)
 		Com_Printf("  %s\n", qvk.sdl2_extensions[i]);
 	}
 
-	int num_inst_ext_max = qvk.num_sdl2_extensions + LENGTH(vk_requested_instance_extensions) + NUM_OPTIONAL_INSTANCE_EXTENSIONS;
+	if (has_sl_vk_req)
+	{
+		Com_Printf("Streamline DLSS Vulkan requirements: instExt=%u devExt=%u vk12=%u vk13=%u gfxQ=%u compQ=%u\n",
+			sl_vk_req.num_instance_extensions, sl_vk_req.num_device_extensions, sl_vk_req.num_features12, sl_vk_req.num_features13,
+			sl_vk_req.num_graphics_queues_required, sl_vk_req.num_compute_queues_required);
+	}
+
+	int num_inst_ext_max = qvk.num_sdl2_extensions + LENGTH(vk_requested_instance_extensions) + NUM_OPTIONAL_INSTANCE_EXTENSIONS
+		+ (has_sl_vk_req ? (int)sl_vk_req.num_instance_extensions : 0);
 	const char **ext = alloca(sizeof(const char *) * num_inst_ext_max);
-	int num_inst_ext_combined = 0;
-	memcpy(ext + num_inst_ext_combined, qvk.sdl2_extensions, qvk.num_sdl2_extensions * sizeof(*qvk.sdl2_extensions));
-	num_inst_ext_combined += qvk.num_sdl2_extensions;
-	memcpy(ext + num_inst_ext_combined, vk_requested_instance_extensions, sizeof(vk_requested_instance_extensions));
-	num_inst_ext_combined += LENGTH(vk_requested_instance_extensions);
+	uint32_t num_inst_ext_combined = 0;
+	append_unique_string_list(ext, &num_inst_ext_combined, num_inst_ext_max, qvk.sdl2_extensions, qvk.num_sdl2_extensions);
+	append_unique_string_list(ext, &num_inst_ext_combined, num_inst_ext_max, vk_requested_instance_extensions, LENGTH(vk_requested_instance_extensions));
+	if (has_sl_vk_req)
+	{
+		append_unique_string_list(ext, &num_inst_ext_combined, num_inst_ext_max, sl_vk_req.instance_extensions, sl_vk_req.num_instance_extensions);
+	}
 
 	bool available_optional_instance_extensions[NUM_OPTIONAL_INSTANCE_EXTENSIONS] = { false };
 
 	get_vk_extension_list(NULL, &qvk.num_extensions, &qvk.extensions); /* valid here? */
-	int num_inst_ext_required = num_inst_ext_combined;
+	uint32_t num_inst_ext_required = num_inst_ext_combined;
 	Com_Printf("Supported Vulkan instance extensions: \n");
 	for(int i = 0; i < qvk.num_extensions; i++) {
 		int requested = 0;
@@ -922,15 +1061,15 @@ init_vulkan(void)
 				break;
 			}
 		}
-		for(int j = 0; j < NUM_OPTIONAL_INSTANCE_EXTENSIONS; j++) {
-			const char *ext_name = optional_instance_extension_name[j];
-			if(!strcmp(qvk.extensions[i].extensionName, ext_name)) {
-				requested = 1;
-				ext[num_inst_ext_combined++] = ext_name;
-				available_optional_instance_extensions[j] = true;
-				break;
+			for(int j = 0; j < NUM_OPTIONAL_INSTANCE_EXTENSIONS; j++) {
+				const char *ext_name = optional_instance_extension_name[j];
+				if(!strcmp(qvk.extensions[i].extensionName, ext_name)) {
+					requested = 1;
+					append_unique_string_list(ext, &num_inst_ext_combined, num_inst_ext_max, &ext_name, 1);
+					available_optional_instance_extensions[j] = true;
+					break;
+				}
 			}
-		}
 		Com_Printf("  %s%s\n", qvk.extensions[i].extensionName, requested ? " (requested)" : "");
 	}
 
@@ -1305,15 +1444,28 @@ init_vulkan(void)
 		return false;
 	}
 	
-	float queue_priorities = 1.0f;
+	float queue_priorities[8] = { 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f };
 	int num_create_queues = 0;
 	VkDeviceQueueCreateInfo queue_create_info[3];
+	uint32_t graphics_queue_count = 1;
+
+	if (has_sl_vk_req)
+	{
+		uint32_t required_extra = sl_vk_req.num_graphics_queues_required + sl_vk_req.num_compute_queues_required;
+		graphics_queue_count += required_extra;
+		if (graphics_queue_count > LENGTH(queue_priorities))
+		{
+			Com_WPrintf("Streamline DLSS requested %u graphics/compute queues; clamping to %u.\n",
+				graphics_queue_count, LENGTH(queue_priorities));
+			graphics_queue_count = LENGTH(queue_priorities);
+		}
+	}
 
 	{
 		VkDeviceQueueCreateInfo q = {
 			.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueCount       = 1,
-			.pQueuePriorities = &queue_priorities,
+			.queueCount       = graphics_queue_count,
+			.pQueuePriorities = queue_priorities,
 			.queueFamilyIndex = qvk.queue_idx_graphics,
 		};
 
@@ -1323,7 +1475,7 @@ init_vulkan(void)
 		VkDeviceQueueCreateInfo q = {
 			.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 			.queueCount       = 1,
-			.pQueuePriorities = &queue_priorities,
+			.pQueuePriorities = queue_priorities,
 			.queueFamilyIndex = qvk.queue_idx_transfer,
 		};
 		queue_create_info[num_create_queues++] = q;
@@ -1364,6 +1516,12 @@ init_vulkan(void)
 		.bufferDeviceAddress = VK_TRUE,
 		.bufferDeviceAddressMultiDevice = qvk.device_count > 1 ? VK_TRUE : VK_FALSE,
 	};
+	apply_streamline_vk12_features(&device_features_vk12, &sl_vk_req);
+	if (has_sl_vk_req && sl_vk_req.num_features13 > 0)
+	{
+		Com_WPrintf("Streamline DLSS requested Vulkan 1.3 features (%u). Phase 1 does not enable explicit 1.3 feature chain.\n",
+			sl_vk_req.num_features13);
+	}
 	VkPhysicalDeviceFeatures2 device_features = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR,
 		.pNext = &device_features_vk12,
@@ -1435,32 +1593,39 @@ init_vulkan(void)
 	uint32_t max_extension_count = LENGTH(vk_requested_device_extensions_common);
 	max_extension_count += max(LENGTH(vk_requested_device_extensions_ray_pipeline), LENGTH(vk_requested_device_extensions_ray_query));
 	max_extension_count += NUM_OPTIONAL_DEVICE_EXTENSIONS;
+	max_extension_count += has_sl_vk_req ? sl_vk_req.num_device_extensions : 0;
 
 	const char** device_extensions = alloca(sizeof(char*) * max_extension_count);
 	uint32_t device_extension_count = 0;
 
-	append_string_list(device_extensions, &device_extension_count, max_extension_count, 
+	append_unique_string_list(device_extensions, &device_extension_count, max_extension_count, 
 		vk_requested_device_extensions_common, LENGTH(vk_requested_device_extensions_common));
 
 	if (qvk.use_ray_query)
 	{
-		append_string_list(device_extensions, &device_extension_count, max_extension_count,
+		append_unique_string_list(device_extensions, &device_extension_count, max_extension_count,
 			vk_requested_device_extensions_ray_query, LENGTH(vk_requested_device_extensions_ray_query));
 
 		device_features_vk12.pNext = &physical_device_ray_query_features;
 	}
 	else
 	{
-		append_string_list(device_extensions, &device_extension_count, max_extension_count,
+		append_unique_string_list(device_extensions, &device_extension_count, max_extension_count,
 			vk_requested_device_extensions_ray_pipeline, LENGTH(vk_requested_device_extensions_ray_pipeline));
 
 		device_features_vk12.pNext = &physical_device_rt_pipeline_features;
+	}
+
+	if (has_sl_vk_req)
+	{
+		append_unique_string_list(device_extensions, &device_extension_count, max_extension_count,
+			sl_vk_req.device_extensions, sl_vk_req.num_device_extensions);
 	}
 	
 	// Add detected optional device extensions
 	for (int i = 0; i < NUM_OPTIONAL_DEVICE_EXTENSIONS; i++) {
 		if (available_optional_device_extensions[i])
-			append_string_list(device_extensions, &device_extension_count, max_extension_count,
+			append_unique_string_list(device_extensions, &device_extension_count, max_extension_count,
 							   optional_device_extension_name + i, 1);
 	}
 
@@ -2649,6 +2814,13 @@ evaluate_taa_settings(const reference_mode_t* ref_mode)
 	if (!ref_mode->enable_denoiser)
 		return;
 
+	if (vkpt_dlss_active())
+	{
+		qvk.effective_aa_mode = AA_MODE_OFF;
+		qvk.extent_taa_output = qvk.extent_unscaled;
+		return;
+	}
+
 	int flt_taa = cvar_flt_taa->integer;
 	// FSR RCAS needs upscaled input; if EASU was disabled, force to TAAU
 	bool force_upscaling = vkpt_fsr_is_enabled() && vkpt_fsr_needs_upscale();
@@ -2849,7 +3021,8 @@ prepare_ubo(refdef_t *fd, mleaf_t* viewleaf, const reference_mode_t* ref_mode, c
 	UBO_CVAR_LIST
 #undef UBO_CVAR_DO
 
-	bool fsr_enabled = vkpt_fsr_is_enabled();
+	bool dlss_enabled = vkpt_dlss_active();
+	bool fsr_enabled = vkpt_fsr_is_enabled() && !dlss_enabled;
 
 	if (!ref_mode->enable_denoiser)
 	{
@@ -2871,11 +3044,19 @@ prepare_ubo(refdef_t *fd, mleaf_t* viewleaf, const reference_mode_t* ref_mode, c
 			ubo->pt_ndf_trim = 1.f;
 		}
 	}
-	else if(fsr_enabled || (qvk.effective_aa_mode == AA_MODE_UPSCALE))
+	else if(dlss_enabled || fsr_enabled || (qvk.effective_aa_mode == AA_MODE_UPSCALE))
 	{
 		// adjust texture LOD bias to the resolution scale, i.e. use negative bias if scale is < 100
-		float resolution_scale = (drs_effective_scale != 0) ? (float)drs_effective_scale : (float)scr_viewsize->integer;
-		resolution_scale *= 0.01f;
+		float resolution_scale;
+		if (dlss_enabled)
+		{
+			resolution_scale = (float)qvk.extent_render.width / (float)max(1u, qvk.extent_unscaled.width);
+		}
+		else
+		{
+			resolution_scale = (drs_effective_scale != 0) ? (float)drs_effective_scale : (float)scr_viewsize->integer;
+			resolution_scale *= 0.01f;
+		}
 		resolution_scale = Q_clipf(resolution_scale, 0.1f, 1.f);
 		ubo->pt_texture_lod_bias = cvar_pt_texture_lod_bias->value + log2f(resolution_scale);
 	}
@@ -2912,6 +3093,8 @@ prepare_ubo(refdef_t *fd, mleaf_t* viewleaf, const reference_mode_t* ref_mode, c
 	ubo->temporal_blend_factor = ref_mode->temporal_blend_factor;
 	ubo->flt_enable = ref_mode->enable_denoiser;
 	ubo->flt_taa = qvk.effective_aa_mode;
+	if (dlss_enabled)
+		ubo->flt_taa = 0;
 	ubo->pt_num_bounce_rays = ref_mode->num_bounce_rays;
 	ubo->pt_reflect_refract = ref_mode->reflect_refract;
 
@@ -2932,7 +3115,7 @@ prepare_ubo(refdef_t *fd, mleaf_t* viewleaf, const reference_mode_t* ref_mode, c
 		ubo->flt_taa = 0;
 	}
 
-	if (qvk.effective_aa_mode == AA_MODE_UPSCALE)
+	if (dlss_enabled || qvk.effective_aa_mode == AA_MODE_UPSCALE)
 	{
 		int taa_index = (int)(qvk.frame_counter % NUM_TAA_SAMPLES);
 		ubo->sub_pixel_jitter[0] = taa_samples[taa_index][0];
@@ -3306,7 +3489,105 @@ R_RenderFrame_RTX(refdef_t *fd)
 
 		vkpt_interleave(post_cmd_buf);
 
-		vkpt_taa(post_cmd_buf);
+		if (vkpt_dlss_active())
+		{
+			QVKUniformBuffer_t* dlss_ubo = &vkpt_refdef.uniform_buffer;
+			mat4_t view_to_view_prev;
+			mat4_t clip_to_prev_clip_tmp;
+			mat4_t clip_to_prev_clip;
+			mat4_t prev_clip_to_clip;
+			mat4_t dlss_v_prev;
+			mat4_t dlss_inv_v;
+			mat4_t dlss_inv_p;
+			mat4_t dlss_p_prev;
+
+			memcpy(dlss_v_prev, dlss_ubo->V_prev, sizeof(dlss_v_prev));
+			memcpy(dlss_inv_v, dlss_ubo->invV, sizeof(dlss_inv_v));
+			memcpy(dlss_inv_p, dlss_ubo->invP, sizeof(dlss_inv_p));
+			memcpy(dlss_p_prev, dlss_ubo->P_prev, sizeof(dlss_p_prev));
+
+			mult_matrix_matrix(view_to_view_prev, dlss_v_prev, dlss_inv_v);
+			mult_matrix_matrix(clip_to_prev_clip_tmp, dlss_inv_p, view_to_view_prev);
+			mult_matrix_matrix(clip_to_prev_clip, clip_to_prev_clip_tmp, dlss_p_prev);
+			inverse(clip_to_prev_clip, prev_clip_to_clip);
+
+			int depth_idx = VKPT_IMG_PT_VIEW_DEPTH_A + (qvk.frame_counter & 1);
+			streamline_dlss_evaluate_params_t dlss_params = { 0 };
+			dlss_params.cmd_buf = post_cmd_buf;
+			dlss_params.color_input = qvk.images[VKPT_IMG_FLAT_COLOR];
+			dlss_params.color_input_view = qvk.images_views[VKPT_IMG_FLAT_COLOR];
+			dlss_params.color_input_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+			dlss_params.color_input_width = qvk.extent_render.width;
+			dlss_params.color_input_height = qvk.extent_render.height;
+			dlss_params.color_output = qvk.images[VKPT_IMG_TAA_OUTPUT];
+			dlss_params.color_output_view = qvk.images_views[VKPT_IMG_TAA_OUTPUT];
+			dlss_params.color_output_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+			dlss_params.color_output_width = qvk.extent_unscaled.width;
+			dlss_params.color_output_height = qvk.extent_unscaled.height;
+			dlss_params.depth = qvk.images[depth_idx];
+			dlss_params.depth_view = qvk.images_views[depth_idx];
+			dlss_params.depth_format = VK_FORMAT_R16_SFLOAT;
+			dlss_params.depth_width = qvk.extent_render.width;
+			dlss_params.depth_height = qvk.extent_render.height;
+			dlss_params.motion_vectors = qvk.images[VKPT_IMG_FLAT_MOTION];
+			dlss_params.motion_vectors_view = qvk.images_views[VKPT_IMG_FLAT_MOTION];
+			dlss_params.motion_vectors_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+			dlss_params.motion_vectors_width = qvk.extent_render.width;
+			dlss_params.motion_vectors_height = qvk.extent_render.height;
+			memcpy(dlss_params.camera_view_to_clip, dlss_ubo->P, sizeof(dlss_params.camera_view_to_clip));
+			memcpy(dlss_params.clip_to_camera_view, dlss_ubo->invP, sizeof(dlss_params.clip_to_camera_view));
+			memcpy(dlss_params.clip_to_prev_clip, clip_to_prev_clip, sizeof(dlss_params.clip_to_prev_clip));
+			memcpy(dlss_params.prev_clip_to_clip, prev_clip_to_clip, sizeof(dlss_params.prev_clip_to_clip));
+			dlss_params.camera_pos[0] = dlss_ubo->cam_pos[0];
+			dlss_params.camera_pos[1] = dlss_ubo->cam_pos[1];
+			dlss_params.camera_pos[2] = dlss_ubo->cam_pos[2];
+			dlss_params.camera_right[0] = dlss_ubo->invV[0][0];
+			dlss_params.camera_right[1] = dlss_ubo->invV[0][1];
+			dlss_params.camera_right[2] = dlss_ubo->invV[0][2];
+			dlss_params.camera_up[0] = dlss_ubo->invV[1][0];
+			dlss_params.camera_up[1] = dlss_ubo->invV[1][1];
+			dlss_params.camera_up[2] = dlss_ubo->invV[1][2];
+			dlss_params.camera_fwd[0] = -dlss_ubo->invV[2][0];
+			dlss_params.camera_fwd[1] = -dlss_ubo->invV[2][1];
+			dlss_params.camera_fwd[2] = -dlss_ubo->invV[2][2];
+			dlss_params.jitter_offset_x = dlss_ubo->sub_pixel_jitter[0];
+			dlss_params.jitter_offset_y = dlss_ubo->sub_pixel_jitter[1];
+			dlss_params.mvec_scale_x = 1.0f;
+			dlss_params.mvec_scale_y = 1.0f;
+			dlss_params.camera_near = vkpt_refdef.z_near;
+			dlss_params.camera_far = vkpt_refdef.z_far;
+			dlss_params.camera_fov = fd->fov_y * ((float)M_PI / 180.0f);
+			dlss_params.camera_aspect_ratio = (float)qvk.extent_unscaled.width / (float)max(1u, qvk.extent_unscaled.height);
+			dlss_params.quality = vkpt_get_dlss_quality();
+			dlss_params.reset = (dlss_reset_pending || !temporal_frame_valid) ? qtrue : qfalse;
+			dlss_params.hdr = qvk.surf_is_hdr ? qtrue : qfalse;
+			dlss_params.use_auto_exposure = qtrue;
+
+			if (!SLDLSS_Evaluate(&dlss_params))
+			{
+				if (!dlss_eval_failure_logged)
+				{
+					Com_WPrintf("DLSS: evaluate failed, falling back to TAA for this frame.\n");
+					dlss_eval_failure_logged = true;
+				}
+				vkpt_taa(post_cmd_buf);
+				dlss_reset_pending = true;
+			}
+			else
+			{
+				if (!dlss_eval_path_logged)
+				{
+					Com_Printf("DLSS: evaluate path active at interleave seam.\n");
+					dlss_eval_path_logged = true;
+				}
+				dlss_eval_failure_logged = false;
+				dlss_reset_pending = false;
+			}
+		}
+		else
+		{
+			vkpt_taa(post_cmd_buf);
+		}
 
 		BEGIN_PERF_MARKER(post_cmd_buf, PROFILER_BLOOM);
 		if (cvar_bloom_enable->integer != 0 || qvk.frame_menu_mode)
@@ -3330,7 +3611,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 		END_PERF_MARKER(post_cmd_buf, PROFILER_TONE_MAPPING);
 
 		// Skip FSR (upscaling) if image is going to be heavily blurred anyway (menu mode)
-		if(vkpt_fsr_is_enabled() && !qvk.frame_menu_mode)
+		if(vkpt_fsr_is_enabled() && !qvk.frame_menu_mode && !vkpt_dlss_active())
 		{
 			vkpt_fsr_do(post_cmd_buf);
 		}
@@ -3360,6 +3641,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 static void temporal_cvar_changed(cvar_t *self)
 {
 	temporal_frame_valid = false;
+	dlss_reset_pending = true;
 }
 
 static void
@@ -3375,6 +3657,7 @@ recreate_swapchain(void)
 	vkpt_initialize_all(VKPT_INIT_SWAPCHAIN_RECREATE);
 
 	qvk.wait_for_idle_frames = MAX_FRAMES_IN_FLIGHT * 2;
+	dlss_reset_pending = true;
 }
 
 static int compare_doubles(const void* pa, const void* pb)
@@ -3415,6 +3698,13 @@ static void drs_process(void)
 #define SCALING_FRAMES 5
 	static int num_valid_frames = 0;
 	static double valid_frame_times[SCALING_FRAMES];
+
+	if (vkpt_dlss_active())
+	{
+		num_valid_frames = 0;
+		drs_effective_scale = 0;
+		return;
+	}
 
 	if (cvar_drs_enable->integer == 0)
 	{
@@ -3511,6 +3801,20 @@ R_BeginFrame_RTX(void)
 	SLReflex_Marker_SimEnd(reflex_frame_id);
 	SLReflex_Marker_RenderStart(reflex_frame_id);
 
+	int dlss_enable = cvar_pt_dlss ? cvar_pt_dlss->integer : 0;
+	int dlss_quality = cvar_pt_dlss_quality ? cvar_pt_dlss_quality->integer : 0;
+	if (dlss_enable != dlss_last_enable || dlss_quality != dlss_last_quality)
+	{
+		static const char* dlss_quality_names[] = { "quality", "balanced", "performance", "ultra_performance" };
+		int clamped_quality = max(0, min(3, dlss_quality));
+		Com_Printf("DLSS: %s (mode=%s).\n", dlss_enable ? "enabled" : "disabled", dlss_quality_names[clamped_quality]);
+		dlss_reset_pending = true;
+		dlss_last_enable = dlss_enable;
+		dlss_last_quality = dlss_quality;
+	}
+
+	vkpt_dlss_update_forced_render_size();
+
 	qvk.current_frame_index = qvk.frame_counter % MAX_FRAMES_IN_FLIGHT;
 
 	VkResult res_fence = vkWaitForFences(qvk.device, 1, qvk.fences_frame_sync + qvk.current_frame_index, VK_TRUE, ~((uint64_t) 0));
@@ -3538,7 +3842,15 @@ R_BeginFrame_RTX(void)
 	drs_process();
 	if (vkpt_refdef.fd)
 	{
-		vkpt_refdef.fd->feedback.resolution_scale = (drs_effective_scale != 0) ? drs_effective_scale : scr_viewsize->integer;
+		if (vkpt_dlss_active())
+		{
+			float s = (float)qvk.extent_render.width * 100.0f / (float)max(1u, qvk.extent_unscaled.width);
+			vkpt_refdef.fd->feedback.resolution_scale = (int)s;
+		}
+		else
+		{
+			vkpt_refdef.fd->feedback.resolution_scale = (drs_effective_scale != 0) ? drs_effective_scale : scr_viewsize->integer;
+		}
 	}
 
 	qvk.extent_render = get_render_extent();
@@ -3636,7 +3948,11 @@ R_EndFrame_RTX(void)
 	if (frame_ready)
 	{
 		bool waterwarp = (vkpt_refdef.fd->rdflags & RDF_UNDERWATER) && cvar_pt_waterwarp->integer;
-		if (vkpt_fsr_is_enabled() && !qvk.frame_menu_mode)
+		if (vkpt_dlss_active())
+		{
+			vkpt_final_blit(cmd_buf, VKPT_IMG_TAA_OUTPUT, qvk.extent_unscaled, false, waterwarp);
+		}
+		else if (vkpt_fsr_is_enabled() && !qvk.frame_menu_mode)
 		{
 			vkpt_fsr_final_blit(cmd_buf, waterwarp);
 		}
@@ -3881,6 +4197,12 @@ R_Init_RTX(bool total)
 
 	// waterwarp effect
 	cvar_pt_waterwarp = Cvar_Get("pt_waterwarp", "0", CVAR_ARCHIVE);
+
+	// DLSS Super Resolution (phase 1)
+	cvar_pt_dlss = Cvar_Get("pt_dlss", "0", CVAR_ARCHIVE);
+	cvar_pt_dlss_quality = Cvar_Get("pt_dlss_quality", "0", CVAR_ARCHIVE);
+	cvar_pt_dlss->changed = dlss_cvar_changed;
+	cvar_pt_dlss_quality->changed = dlss_cvar_changed;
 
 #ifdef VKPT_DEVICE_GROUPS
 	cvar_sli = Cvar_Get("sli", "1", CVAR_REFRESH | CVAR_ARCHIVE);
@@ -4414,6 +4736,7 @@ R_BeginRegistration_RTX(const char *name)
 	vkpt_physical_sky_latch_local_time();
 	vkpt_bloom_reset();
 	vkpt_tone_mapping_request_reset();
+	dlss_reset_pending = true;
 	vkpt_light_buffer_reset_counts();
 
 	memset(cluster_debug_mask, 0, sizeof(cluster_debug_mask));
