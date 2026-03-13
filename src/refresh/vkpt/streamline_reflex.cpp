@@ -23,6 +23,7 @@
 #include <Windows.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 
 extern "C" {
 #include "streamline_reflex.h"
@@ -52,6 +53,9 @@ PFN_vkDestroySurfaceKHR     SL_vkDestroySurfaceKHR;
 static HMODULE             s_sl_module;
 static sl::FrameToken     *s_frame_token;
 static bool                s_preinit_done;
+static wchar_t             s_plugin_path_storage[4][MAX_PATH];
+static const wchar_t      *s_plugin_paths[4];
+static uint32_t            s_num_plugin_paths;
 
 static PFN_vkGetDeviceProcAddr   s_sl_vkGetDeviceProcAddr;
 static PFN_vkGetInstanceProcAddr s_sl_vkGetInstanceProcAddr;
@@ -102,6 +106,80 @@ static void sl_log_callback(sl::LogType type, const char *msg)
     case sl::LogType::eError: Com_EPrintf("[SL] %s\n", msg); break;
     case sl::LogType::eWarn:  Com_WPrintf("[SL] %s\n", msg); break;
     default:                  Com_DPrintf("[SL] %s\n", msg); break;
+    }
+}
+
+static bool sl_path_exists(const wchar_t *path, bool want_directory)
+{
+    DWORD attrs = GetFileAttributesW(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES)
+        return false;
+    if (want_directory)
+        return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    return (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+static void sl_log_loaded_module_path(void)
+{
+    if (!s_sl_module)
+        return;
+
+    wchar_t path_w[MAX_PATH];
+    DWORD len = GetModuleFileNameW(s_sl_module, path_w, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH)
+        return;
+
+    char path_utf8[MAX_PATH * 3];
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, path_w, -1, path_utf8, (int)sizeof(path_utf8), nullptr, nullptr);
+    if (bytes > 0)
+        Com_Printf("Streamline: loaded interposer from '%s'.\n", path_utf8);
+}
+
+static bool sl_build_absolute_from_exe(const wchar_t *relative_suffix, wchar_t *out_path, size_t out_count)
+{
+    if (!relative_suffix || !out_path || out_count == 0)
+        return false;
+
+    wchar_t exe_path[MAX_PATH];
+    DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH)
+        return false;
+
+    wchar_t *last_slash = wcsrchr(exe_path, L'\\');
+    if (!last_slash)
+        return false;
+    last_slash[1] = L'\0';
+
+    wchar_t joined[MAX_PATH];
+    if (_snwprintf_s(joined, _countof(joined), _TRUNCATE, L"%s%s", exe_path, relative_suffix) < 0)
+        return false;
+
+    DWORD full_len = GetFullPathNameW(joined, (DWORD)out_count, out_path, nullptr);
+    return (full_len > 0 && full_len < out_count);
+}
+
+static void sl_build_plugin_search_paths(void)
+{
+    s_num_plugin_paths = 0;
+
+    if (sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64\\development", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
+        sl_path_exists(s_plugin_path_storage[s_num_plugin_paths], true)) {
+        s_plugin_paths[s_num_plugin_paths] = s_plugin_path_storage[s_num_plugin_paths];
+        s_num_plugin_paths++;
+    }
+
+    if (s_num_plugin_paths < _countof(s_plugin_paths) &&
+        sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
+        sl_path_exists(s_plugin_path_storage[s_num_plugin_paths], true)) {
+        s_plugin_paths[s_num_plugin_paths] = s_plugin_path_storage[s_num_plugin_paths];
+        s_num_plugin_paths++;
+    }
+
+    if (s_num_plugin_paths < _countof(s_plugin_paths) &&
+        sl_build_absolute_from_exe(L"streamline\\bin\\x64", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
+        sl_path_exists(s_plugin_path_storage[s_num_plugin_paths], true)) {
+        s_plugin_paths[s_num_plugin_paths] = s_plugin_path_storage[s_num_plugin_paths];
+        s_num_plugin_paths++;
     }
 }
 
@@ -199,6 +277,7 @@ static void clear_all(void)
 
     s_frame_token = nullptr;
     s_preinit_done = false;
+    s_num_plugin_paths = 0;
     s_dlss_available = false;
     s_dlss_requirements_valid = false;
     memset(&s_dlss_requirements, 0, sizeof(s_dlss_requirements));
@@ -215,22 +294,46 @@ extern "C" qboolean SLReflex_PreInit(void)
     memset(&sl_reflex, 0, sizeof(sl_reflex));
     reflex_frame_id = 0;
     s_preinit_done = false;
+    s_num_plugin_paths = 0;
     s_dlss_available = false;
     s_dlss_requirements_valid = false;
     memset(&s_dlss_requirements, 0, sizeof(s_dlss_requirements));
 
-    const wchar_t *dll_paths[] = {
-        L"sl.interposer.dll",
-        L"streamline\\bin\\x64\\sl.interposer.dll",
-    };
+    sl_build_plugin_search_paths();
 
-    for (int i = 0; i < 2 && !s_sl_module; i++)
+    wchar_t sdk_dev_interposer_path[MAX_PATH];
+    wchar_t sdk_interposer_path[MAX_PATH];
+    wchar_t local_interposer_path[MAX_PATH];
+    const wchar_t *dll_paths[5];
+    int num_dll_paths = 0;
+
+    dll_paths[num_dll_paths++] = L"sl.interposer.dll";
+
+    if (sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64\\development\\sl.interposer.dll", sdk_dev_interposer_path, _countof(sdk_dev_interposer_path)) &&
+        sl_path_exists(sdk_dev_interposer_path, false)) {
+        dll_paths[num_dll_paths++] = sdk_dev_interposer_path;
+    }
+
+    if (sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64\\sl.interposer.dll", sdk_interposer_path, _countof(sdk_interposer_path)) &&
+        sl_path_exists(sdk_interposer_path, false)) {
+        dll_paths[num_dll_paths++] = sdk_interposer_path;
+    }
+
+    if (sl_build_absolute_from_exe(L"streamline\\bin\\x64\\sl.interposer.dll", local_interposer_path, _countof(local_interposer_path)) &&
+        sl_path_exists(local_interposer_path, false)) {
+        dll_paths[num_dll_paths++] = local_interposer_path;
+    }
+
+    dll_paths[num_dll_paths++] = L"streamline\\bin\\x64\\sl.interposer.dll";
+
+    for (int i = 0; i < num_dll_paths && !s_sl_module; i++)
         s_sl_module = LoadLibraryW(dll_paths[i]);
 
     if (!s_sl_module) {
         Com_Printf("Streamline: sl.interposer.dll not found - Reflex disabled.\n");
         return qfalse;
     }
+    sl_log_loaded_module_path();
 
     p_slInit               = sl_get_proc<Fn_slInit>("slInit");
     p_slShutdown           = sl_get_proc<Fn_slShutdown>("slShutdown");
@@ -255,17 +358,18 @@ extern "C" qboolean SLReflex_PreInit(void)
         return qfalse;
     }
 
-    sl::Feature features[] = { sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS };
+    sl::Feature features[] = { sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS, sl::kFeatureImGUI };
 
     sl::Preferences prefs{};
-    prefs.showConsole       = false;
+    prefs.showConsole       = true;
     prefs.logLevel          = sl::LogLevel::eDefault;
     prefs.logMessageCallback = sl_log_callback;
+    prefs.pathsToPlugins    = s_num_plugin_paths ? s_plugin_paths : nullptr;
+    prefs.numPathsToPlugins = s_num_plugin_paths;
     prefs.featuresToLoad    = features;
-    prefs.numFeaturesToLoad = 3;
+    prefs.numFeaturesToLoad = 4;
     prefs.engine            = sl::EngineType::eCustom;
     prefs.engineVersion     = "Q2RTX";
-    prefs.projectId         = "q2rtx-phase1-dlss";
     prefs.renderAPI         = sl::RenderAPI::eVulkan;
     prefs.flags             = sl::PreferenceFlags::eDisableCLStateTracking
                             | sl::PreferenceFlags::eUseManualHooking
@@ -283,6 +387,14 @@ extern "C" qboolean SLReflex_PreInit(void)
         }
     }
 
+    const char *project_id_env = getenv("SL_PROJECT_ID");
+    if (project_id_env && project_id_env[0]) {
+        prefs.projectId = project_id_env;
+        Com_Printf("Streamline DLSS: using projectId from SL_PROJECT_ID ('%s').\n", prefs.projectId);
+    } else {
+        Com_Printf("Streamline DLSS: no projectId configured; relying on appId/temporary NGX identity.\n");
+    }
+
     sl::Result res = p_slInit(prefs, sl::kSDKVersion);
     if (res != sl::Result::eOk) {
         Com_EPrintf("Streamline: slInit failed (code %d) - Reflex disabled.\n", (int)res);
@@ -293,6 +405,11 @@ extern "C" qboolean SLReflex_PreInit(void)
 
     s_preinit_done = true;
     Com_Printf("Streamline: slInit completed (manual hooking).\n");
+    if (s_num_plugin_paths) {
+        Com_Printf("Streamline: configured %u plugin search path(s) for feature loading.\n", s_num_plugin_paths);
+    } else {
+        Com_WPrintf("Streamline: no explicit plugin search paths configured; relying on DLL local directory.\n");
+    }
 
     if (p_slGetFeatureRequirements) {
         sl::FeatureRequirements req{};
@@ -373,7 +490,7 @@ extern "C" qboolean SLReflex_PostInit(VkInstance instance, VkPhysicalDevice phys
     if (s_dlss_available)
         Com_Printf("Streamline DLSS: feature functions resolved.\n");
     else
-        Com_WPrintf("Streamline DLSS: feature functions unavailable, DLSS path disabled.\n");
+        Com_WPrintf("Streamline DLSS: feature functions unavailable (missing feature context, plugin load, or support), DLSS path disabled.\n");
 
     resolve_vulkan_proxies(instance, device);
 
