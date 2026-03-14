@@ -423,6 +423,15 @@ vkpt_interleave(VkCommandBuffer cmd_buf)
 							offset_left,
 							offset_right,
 							extent);
+
+		vkpt_mgpu_image_copy(cmd_buf,
+							VKPT_IMG_PT_VIEW_DEPTH_A,
+							VKPT_IMG_PT_VIEW_DEPTH_A,
+							1,
+							0,
+							offset_left,
+							offset_right,
+							extent);
 		
 		vkpt_mgpu_image_copy(cmd_buf,
 							VKPT_IMG_ASVGF_COLOR,
@@ -457,6 +466,7 @@ vkpt_interleave(VkCommandBuffer cmd_buf)
 
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_FLAT_COLOR]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_FLAT_MOTION]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_FLAT_DEPTH]);
 
 	return VK_SUCCESS;
 }
