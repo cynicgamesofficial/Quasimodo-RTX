@@ -4368,7 +4368,7 @@ R_Init_RTX(bool total)
 	// When nonzero, the Vulkan validation layer is requested
 	cvar_vk_validation = Cvar_Get("vk_validation", "0", CVAR_REFRESH | CVAR_ARCHIVE);
 
-	cl_reflex = Cvar_Get("cl_reflex", "1", CVAR_ARCHIVE);
+	cl_reflex = Cvar_Get("cl_reflex", "2", CVAR_ARCHIVE);
 
 #if USE_DEBUG
 	// Testing: force a colored shell on all entities
