@@ -40,6 +40,7 @@ typedef enum {
     SL_DLSS_QUALITY_BALANCED = 1,
     SL_DLSS_QUALITY_PERFORMANCE = 2,
     SL_DLSS_QUALITY_ULTRA_PERFORMANCE = 3,
+    SL_DLSS_QUALITY_DLAA = 4,
 } streamline_dlss_quality_t;
 
 typedef struct {

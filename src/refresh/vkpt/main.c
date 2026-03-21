@@ -143,6 +143,7 @@ static bool dlss_forced_render_from_optimal = false;
 static bool dlss_eval_path_logged = false;
 static bool dlss_eval_failure_logged = false;
 static bool dlss_hdr_input_logged = false;
+static bool dlss_depth_input_logged = false;
 
 static float sky_rotation = 0.f;
 static int sky_autorotate = 0;
@@ -237,7 +238,10 @@ static void drs_maxscale_changed(cvar_t *self)
 static void accumulation_cvar_changed(cvar_t* self)
 {
 	// Reset accumulation rendering on DoF parameter change
+	(void)self;
 	num_accumulated_frames = 0;
+	temporal_frame_valid = false;
+	dlss_reset_pending = true;
 }
 
 static void dlss_cvar_changed(cvar_t* self)
@@ -245,7 +249,7 @@ static void dlss_cvar_changed(cvar_t* self)
 	if (self == cvar_pt_dlss)
 		Cvar_ClampInteger(self, 0, 1);
 	else if (self == cvar_pt_dlss_quality)
-		Cvar_ClampInteger(self, 0, 3);
+		Cvar_ClampInteger(self, 0, 4);
 	(void)self;
 	dlss_reset_pending = true;
 }
@@ -258,7 +262,7 @@ static qboolean vkpt_dlss_requested(void)
 static streamline_dlss_quality_t vkpt_get_dlss_quality(void)
 {
 	int quality = cvar_pt_dlss_quality ? cvar_pt_dlss_quality->integer : 0;
-	quality = max(0, min(3, quality));
+	quality = max(0, min(4, quality));
 	switch (quality)
 	{
 	default:
@@ -266,6 +270,7 @@ static streamline_dlss_quality_t vkpt_get_dlss_quality(void)
 	case 1: return SL_DLSS_QUALITY_BALANCED;
 	case 2: return SL_DLSS_QUALITY_PERFORMANCE;
 	case 3: return SL_DLSS_QUALITY_ULTRA_PERFORMANCE;
+	case 4: return SL_DLSS_QUALITY_DLAA;
 	}
 }
 
@@ -437,6 +442,8 @@ static VkExtent2D get_screen_image_extent(void)
 void vkpt_reset_accumulation()
 {
 	num_accumulated_frames = 0;
+	temporal_frame_valid = false;
+	dlss_reset_pending = true;
 }
 
 VkResult
@@ -3246,6 +3253,11 @@ R_RenderFrame_RTX(refdef_t *fd)
 
 	vkpt_refdef.fd = fd;
 	bool render_world = (fd->rdflags & RDF_NOWORLDMODEL) == 0;
+	if (!render_world)
+	{
+		temporal_frame_valid = false;
+		dlss_reset_pending = true;
+	}
 
 	static float previous_time = -1.f;
 	float frame_time = min(1.f, max(0.f, fd->time - previous_time));
@@ -3590,7 +3602,6 @@ R_RenderFrame_RTX(refdef_t *fd)
 			mult_matrix_matrix(clip_to_prev_clip, clip_to_prev_clip_tmp, dlss_p_prev);
 			inverse(clip_to_prev_clip, prev_clip_to_clip);
 
-			int depth_idx = VKPT_IMG_PT_VIEW_DEPTH_A + (qvk.frame_counter & 1);
 			streamline_dlss_evaluate_params_t dlss_params = { 0 };
 			dlss_params.cmd_buf = post_cmd_buf;
 			dlss_params.color_input = qvk.images[VKPT_IMG_FLAT_COLOR];
@@ -3603,8 +3614,8 @@ R_RenderFrame_RTX(refdef_t *fd)
 			dlss_params.color_output_format = VK_FORMAT_R16G16B16A16_SFLOAT;
 			dlss_params.color_output_width = qvk.extent_unscaled.width;
 			dlss_params.color_output_height = qvk.extent_unscaled.height;
-			dlss_params.depth = qvk.images[depth_idx];
-			dlss_params.depth_view = qvk.images_views[depth_idx];
+			dlss_params.depth = qvk.images[VKPT_IMG_FLAT_DEPTH];
+			dlss_params.depth_view = qvk.images_views[VKPT_IMG_FLAT_DEPTH];
 			dlss_params.depth_format = VK_FORMAT_R16_SFLOAT;
 			dlss_params.depth_width = qvk.extent_render.width;
 			dlss_params.depth_height = qvk.extent_render.height;
@@ -3636,7 +3647,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 			dlss_params.camera_near = vkpt_refdef.z_near;
 			dlss_params.camera_far = vkpt_refdef.z_far;
 			dlss_params.camera_fov = fd->fov_y * ((float)M_PI / 180.0f);
-			dlss_params.camera_aspect_ratio = (float)qvk.extent_unscaled.width / (float)max(1u, qvk.extent_unscaled.height);
+			dlss_params.camera_aspect_ratio = (float)qvk.extent_render.width / (float)max(1u, qvk.extent_render.height);
 			dlss_params.quality = vkpt_get_dlss_quality();
 			dlss_params.reset = (dlss_reset_pending || !temporal_frame_valid) ? qtrue : qfalse;
 			// DLSS is evaluated pre-tonemap from FP16 scene color and must be treated as HDR.
@@ -3647,6 +3658,11 @@ R_RenderFrame_RTX(refdef_t *fd)
 			{
 				Com_Printf("DLSS: using pre-tonemap HDR scene color input.\n");
 				dlss_hdr_input_logged = true;
+			}
+			if (!dlss_depth_input_logged)
+			{
+				Com_Printf("DLSS: using interleaved flat depth input (abs(view-depth)).\n");
+				dlss_depth_input_logged = true;
 			}
 
 			if (!SLDLSS_Evaluate(&dlss_params))
@@ -3891,11 +3907,12 @@ R_BeginFrame_RTX(void)
 	int dlss_quality = cvar_pt_dlss_quality ? cvar_pt_dlss_quality->integer : 0;
 	if (dlss_enable != dlss_last_enable || dlss_quality != dlss_last_quality)
 	{
-		static const char* dlss_quality_names[] = { "quality", "balanced", "performance", "ultra_performance" };
-		int clamped_quality = max(0, min(3, dlss_quality));
+		static const char* dlss_quality_names[] = { "quality", "balanced", "performance", "ultra_performance", "dlaa" };
+		int clamped_quality = max(0, min(4, dlss_quality));
 		Com_Printf("DLSS: %s (mode=%s).\n", dlss_enable ? "enabled" : "disabled", dlss_quality_names[clamped_quality]);
 		dlss_reset_pending = true;
 		dlss_hdr_input_logged = false;
+		dlss_depth_input_logged = false;
 		dlss_last_enable = dlss_enable;
 		dlss_last_quality = dlss_quality;
 	}
@@ -3929,6 +3946,31 @@ R_BeginFrame_RTX(void)
 	drs_process();
 	qvk.extent_render = get_render_extent();
 	qvk.gpu_slice_width = (qvk.extent_render.width + qvk.device_count - 1) / qvk.device_count;
+	static bool dlss_prev_valid = false;
+	static VkExtent2D dlss_prev_render = { 0 };
+	static VkExtent2D dlss_prev_output = { 0 };
+	if (vkpt_dlss_active())
+	{
+		if (!dlss_prev_valid ||
+			!extents_equal(dlss_prev_render, qvk.extent_render) ||
+			!extents_equal(dlss_prev_output, qvk.extent_unscaled))
+		{
+			if (dlss_prev_valid)
+			{
+				Com_Printf("DLSS: history reset due to extent change (render %ux%u -> %ux%u, output %ux%u -> %ux%u).\n",
+					dlss_prev_render.width, dlss_prev_render.height, qvk.extent_render.width, qvk.extent_render.height,
+					dlss_prev_output.width, dlss_prev_output.height, qvk.extent_unscaled.width, qvk.extent_unscaled.height);
+			}
+			dlss_reset_pending = true;
+			dlss_prev_render = qvk.extent_render;
+			dlss_prev_output = qvk.extent_unscaled;
+			dlss_prev_valid = true;
+		}
+	}
+	else
+	{
+		dlss_prev_valid = false;
+	}
 
 	if (vkpt_refdef.fd)
 	{

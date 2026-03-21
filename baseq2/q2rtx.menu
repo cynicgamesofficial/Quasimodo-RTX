@@ -140,6 +140,10 @@ begin video
     ifeq vid_rtx 1
         action "HDR options..." pushmenu hdr
         blank
+        toggle "NVIDIA DLSS Super Resolution" pt_dlss
+        pairs --status "only effective when DLSS is enabled" "DLSS quality mode" pt_dlss_quality \
+            "quality" 0 "balanced" 1 "performance" 2 "ultra performance" 3 "dlaa" 4
+        blank
         range -f "%+.1f EV" "exposure bias (brightness)" tm_exposure_bias -5 0 0.1
         range -p -f "%.0f%%" "contrast" tm_reinhard 0 1 0.1
 		range "texture LOD bias" pt_texture_lod_bias -2 2 0.5

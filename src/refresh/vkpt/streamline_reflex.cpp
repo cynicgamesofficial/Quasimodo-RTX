@@ -632,6 +632,8 @@ extern "C" qboolean SLReflex_IsLowLatencyAvailable(void)
 static sl::DLSSMode map_dlss_mode(streamline_dlss_quality_t quality)
 {
     switch (quality) {
+    case SL_DLSS_QUALITY_DLAA:
+        return sl::DLSSMode::eDLAA;
     case SL_DLSS_QUALITY_BALANCED:
         return sl::DLSSMode::eBalanced;
     case SL_DLSS_QUALITY_PERFORMANCE:
