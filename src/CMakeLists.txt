@@ -519,32 +519,45 @@ IF (TARGET client)
 
         # Streamline SDK (Reflex) – Windows only
         IF(WIN32)
-            set(STREAMLINE_SDK_DIR "${CMAKE_SOURCE_DIR}/../third/release" CACHE PATH "Streamline SDK root")
-            IF(EXISTS "${STREAMLINE_SDK_DIR}/include/sl.h")
-                TARGET_SOURCES(client PRIVATE ${SRC_VKPT_STREAMLINE})
-                TARGET_INCLUDE_DIRECTORIES(client PRIVATE "${STREAMLINE_SDK_DIR}/include")
+            set(STREAMLINE_INCLUDE_DIR "${STREAMLINE_ROOT}/include")
+            set(STREAMLINE_BIN_DIR "${STREAMLINE_ROOT}/bin/x64")
+            set(STREAMLINE_BIN_DEV_DIR "${STREAMLINE_BIN_DIR}/development")
+            set(STREAMLINE_RUNTIME_BIN_DIR "${CMAKE_SOURCE_DIR}/streamline/bin/x64")
 
-                set(SL_BIN_DIR "${CMAKE_SOURCE_DIR}/streamline/bin/x64")
-                set(SL_DLLS
-                    sl.interposer.dll
-                    sl.common.dll
-                    sl.reflex.dll
-                    sl.pcl.dll
-                    sl.imgui.dll
-                    NvLowLatencyVk.dll
-                )
-                foreach(dll ${SL_DLLS})
-                    if(EXISTS "${SL_BIN_DIR}/${dll}")
+            IF(EXISTS "${STREAMLINE_INCLUDE_DIR}/sl.h")
+                TARGET_SOURCES(client PRIVATE ${SRC_VKPT_STREAMLINE})
+                TARGET_INCLUDE_DIRECTORIES(client PRIVATE "${STREAMLINE_INCLUDE_DIR}")
+
+                set(STREAMLINE_RUNTIME_SOURCE_DIR "${STREAMLINE_BIN_DEV_DIR}")
+                if(NOT EXISTS "${STREAMLINE_RUNTIME_SOURCE_DIR}/sl.interposer.dll")
+                    set(STREAMLINE_RUNTIME_SOURCE_DIR "${STREAMLINE_BIN_DIR}")
+                endif()
+
+                if(EXISTS "${STREAMLINE_RUNTIME_SOURCE_DIR}/sl.interposer.dll")
+                    file(GLOB STREAMLINE_RUNTIME_DLLS "${STREAMLINE_RUNTIME_SOURCE_DIR}/*.dll")
+                    foreach(runtime_dll ${STREAMLINE_RUNTIME_DLLS})
+                        get_filename_component(runtime_dll_name "${runtime_dll}" NAME)
                         add_custom_command(TARGET client POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E make_directory "${STREAMLINE_RUNTIME_BIN_DIR}"
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                                "${SL_BIN_DIR}/${dll}"
-                                "${CMAKE_SOURCE_DIR}/${dll}"
-                            COMMENT "Copying ${dll} to runtime directory"
+                                "${runtime_dll}"
+                                "${STREAMLINE_RUNTIME_BIN_DIR}/${runtime_dll_name}"
+                            COMMENT "Copying ${runtime_dll_name} to Streamline runtime directory"
                         )
-                    endif()
-                endforeach()
+                        if(runtime_dll_name STREQUAL "sl.interposer.dll")
+                            add_custom_command(TARGET client POST_BUILD
+                                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                    "${runtime_dll}"
+                                    "${CMAKE_SOURCE_DIR}/${runtime_dll_name}"
+                                COMMENT "Copying sl.interposer.dll next to executable"
+                            )
+                        endif()
+                    endforeach()
+                else()
+                    MESSAGE(STATUS "Streamline runtime DLLs not found under ${STREAMLINE_BIN_DEV_DIR} or ${STREAMLINE_BIN_DIR}")
+                endif()
             ELSE()
-                MESSAGE(STATUS "Streamline SDK not found at ${STREAMLINE_SDK_DIR} – Reflex disabled at compile time")
+                MESSAGE(STATUS "Streamline SDK not found at ${STREAMLINE_ROOT} - Reflex disabled at compile time")
             ENDIF()
         ENDIF()
     ENDIF()
@@ -769,3 +782,4 @@ IF(CONFIG_LINUX_PACKAGING_SUPPORT)
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
         COMPONENT shareware)
 ENDIF()
+

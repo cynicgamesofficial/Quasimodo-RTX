@@ -1,21 +1,28 @@
-# Quake II RTX Change Log
+﻿# Quake II RTX Change Log
 
 ## Unreleased
 
 **New Features:**
 
-  * **NVIDIA Reflex via Streamline** — Integrated NVIDIA Reflex low-latency mode using the Streamline SDK (manual hooking, dynamic loading). Reflex is optional: if `sl.interposer.dll` is missing, the game runs normally. New cvar `cl_reflex` (0 = Off, 1 = On, 2 = On + Boost). Sleep runs at the start of each frame; PCL markers (simulation, render, present) fire every frame for latency measurement.
-  * **Streamline ImGUI debugging** — When using development Streamline DLLs and `sl.interposer.json` with `loadAllFeatures: true`, the Streamline ImGUI overlay (Ctrl+Shift+Home) can be used to inspect Reflex state, marker usage, and sleep stats. See `docs/STREAMLINE_REFLEX.md` section 11.
+  * **NVIDIA Reflex via Streamline** - Integrated NVIDIA Reflex low-latency mode using the Streamline SDK (manual hooking, dynamic loading). Reflex is optional: if `sl.interposer.dll` is missing, the game runs normally. New cvar `cl_reflex` (0 = Off, 1 = On, 2 = On + Boost). Sleep runs at the start of each frame; PCL markers (simulation, render, present) fire every frame for latency measurement.
+  * **Streamline ImGUI debugging** - When using development Streamline DLLs and `sl.interposer.json` with `loadAllFeatures: true`, the Streamline ImGUI overlay (Ctrl+Shift+Home) can be used to inspect Reflex state, marker usage, and sleep stats. See `docs/STREAMLINE_REFLEX.md` section 11.
+  * **Portable Streamline SDK root** - Added `STREAMLINE_ROOT` (`${PROJECT_SOURCE_DIR}/Third Parties/NVIDIA`) as the canonical repository-local SDK path for Windows Streamline integration.
 
 **Fixed Issues:**
 
-  * Fixed Streamline Reflex ImGUI panel showing "Optimize with markers: No" — the wrapper now sets `sl::ReflexOptions::useMarkersToOptimize = true` so the Reflex plugin and driver use the application's PCL markers for sleep optimization.
-  * Fixed Streamline "Invalid VK queue" / "No reflex" on supported NVIDIA hardware — three root causes: `slSetVulkanInfo` queue index was 0 (Streamline uses it as host queue count, must be 1); `NvLowLatencyVk.dll` was missing from the runtime directory; `VK_NV_low_latency` Vulkan device extension was not enabled. All three are now fixed.
+  * Fixed Streamline Reflex ImGUI panel showing "Optimize with markers: No" - the wrapper now sets `sl::ReflexOptions::useMarkersToOptimize = true` so the Reflex plugin and driver use the application's PCL markers for sleep optimization.
+  * Fixed Streamline "Invalid VK queue" / "No reflex" on supported NVIDIA hardware - three root causes: `slSetVulkanInfo` queue index was 0 (Streamline uses it as host queue count, must be 1); `NvLowLatencyVk.dll` was missing from the runtime directory; `VK_NV_low_latency` Vulkan device extension was not enabled. All three are now fixed.
+  * Fixed Streamline one-time validation warning `consts.cameraPinholeOffset should not be left as invalid` by explicitly initializing `Constants::cameraPinholeOffset` to `{0.0f, 0.0f}` in the DLSS evaluate constants path.
 
 **Misc Improvements:**
 
   * Build: added `sl.imgui.dll` and `NvLowLatencyVk.dll` to the Streamline POST_BUILD copy list. Gitignore updated for Streamline JSON debug configs (`sl.interposer.json`, `sl.common.json`, etc.).
-  * Documentation: `docs/STREAMLINE_REFLEX.md` — full Reflex integration notes, Vulkan proxy routing, frame flow, ImGUI debug setup, and design rules.
+  * Documentation: `docs/STREAMLINE_REFLEX.md` - full Reflex integration notes, Vulkan proxy routing, frame flow, ImGUI debug setup, and design rules.
+  * Streamline portability hardening:
+    - Runtime plugin search paths now prefer executable-local `streamline/bin/x64` and then fall back to repository-local `Third Parties/NVIDIA/bin/x64` paths.
+    - Interposer load fallback chain was updated to remove developer-machine absolute assumptions and use executable-relative/repo-relative candidates only.
+    - Windows post-build deployment now copies the active Streamline runtime DLL set from `STREAMLINE_ROOT/bin/x64[/development]` to `streamline/bin/x64`, and places `sl.interposer.dll` next to `q2rtx.exe`.
+  * Added implementation and audit documentation for the March 21, 2026 Streamline portability and runtime-loading investigation in `docs/STREAMLINE_PORTABILITY_AND_AUDIT_2026-03-21.md`.
 
 ---
 
@@ -360,7 +367,7 @@
   * Added a spatial denoiser for the specular channel.
   * Added support for loading custom sky (portal) light meshes from .obj files, and added portal light definitions for many maps in the base game.
   * Added triangular lights for laser beams: https://github.com/NVIDIA/Q2RTX/issues/43 
-  * Added “shader balls” to the shipping builds.
+  * Added â€œshader ballsâ€ to the shipping builds.
   * Added cvar `pt_accumulation_rendering_framenum` to control how many frames to accumulate in the reference mode.
   * Added cvar `pt_show_sky` to make analyzing skybox geometry easier.
 
@@ -385,7 +392,7 @@
   * Fixed flickering that happened when the number of dynamic lights changes.
   * Improved sharpness of textured glass and similar transmissive effects by passing them around the denoiser.
   * Added multiple importance sampling of specular reflections of direct lights.
-  * Replaced sphere lights that were used for wall lamps (mostly in the “train” map) with polygon lights to reduce noise.
+  * Replaced sphere lights that were used for wall lamps (mostly in the â€œtrainâ€ map) with polygon lights to reduce noise.
   * Added an upper limit on sky luminance to avoid oversampling the sky in shadowed areas and thus reduce noise from direct lights.
   * Added light sampling correction based on statistical per-cluster light visibility. The idea is, if we see that a light is usually not visible, let's not sample it so much.
 
@@ -450,3 +457,4 @@
 ## 1.0.0
 
 **Initial Release**
+

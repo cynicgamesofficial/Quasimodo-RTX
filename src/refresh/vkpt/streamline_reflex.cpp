@@ -162,21 +162,21 @@ static void sl_build_plugin_search_paths(void)
 {
     s_num_plugin_paths = 0;
 
-    if (sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64\\development", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
+    if (sl_build_absolute_from_exe(L"streamline\\bin\\x64", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
         sl_path_exists(s_plugin_path_storage[s_num_plugin_paths], true)) {
         s_plugin_paths[s_num_plugin_paths] = s_plugin_path_storage[s_num_plugin_paths];
         s_num_plugin_paths++;
     }
 
     if (s_num_plugin_paths < _countof(s_plugin_paths) &&
-        sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
+        sl_build_absolute_from_exe(L"Third Parties\\NVIDIA\\bin\\x64\\development", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
         sl_path_exists(s_plugin_path_storage[s_num_plugin_paths], true)) {
         s_plugin_paths[s_num_plugin_paths] = s_plugin_path_storage[s_num_plugin_paths];
         s_num_plugin_paths++;
     }
 
     if (s_num_plugin_paths < _countof(s_plugin_paths) &&
-        sl_build_absolute_from_exe(L"streamline\\bin\\x64", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
+        sl_build_absolute_from_exe(L"Third Parties\\NVIDIA\\bin\\x64", s_plugin_path_storage[s_num_plugin_paths], _countof(s_plugin_path_storage[0])) &&
         sl_path_exists(s_plugin_path_storage[s_num_plugin_paths], true)) {
         s_plugin_paths[s_num_plugin_paths] = s_plugin_path_storage[s_num_plugin_paths];
         s_num_plugin_paths++;
@@ -301,27 +301,27 @@ extern "C" qboolean SLReflex_PreInit(void)
 
     sl_build_plugin_search_paths();
 
+    wchar_t local_interposer_path[MAX_PATH];
     wchar_t sdk_dev_interposer_path[MAX_PATH];
     wchar_t sdk_interposer_path[MAX_PATH];
-    wchar_t local_interposer_path[MAX_PATH];
     const wchar_t *dll_paths[5];
     int num_dll_paths = 0;
 
     dll_paths[num_dll_paths++] = L"sl.interposer.dll";
 
-    if (sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64\\development\\sl.interposer.dll", sdk_dev_interposer_path, _countof(sdk_dev_interposer_path)) &&
+    if (sl_build_absolute_from_exe(L"streamline\\bin\\x64\\sl.interposer.dll", local_interposer_path, _countof(local_interposer_path)) &&
+        sl_path_exists(local_interposer_path, false)) {
+        dll_paths[num_dll_paths++] = local_interposer_path;
+    }
+
+    if (sl_build_absolute_from_exe(L"Third Parties\\NVIDIA\\bin\\x64\\development\\sl.interposer.dll", sdk_dev_interposer_path, _countof(sdk_dev_interposer_path)) &&
         sl_path_exists(sdk_dev_interposer_path, false)) {
         dll_paths[num_dll_paths++] = sdk_dev_interposer_path;
     }
 
-    if (sl_build_absolute_from_exe(L"..\\third\\release\\bin\\x64\\sl.interposer.dll", sdk_interposer_path, _countof(sdk_interposer_path)) &&
+    if (sl_build_absolute_from_exe(L"Third Parties\\NVIDIA\\bin\\x64\\sl.interposer.dll", sdk_interposer_path, _countof(sdk_interposer_path)) &&
         sl_path_exists(sdk_interposer_path, false)) {
         dll_paths[num_dll_paths++] = sdk_interposer_path;
-    }
-
-    if (sl_build_absolute_from_exe(L"streamline\\bin\\x64\\sl.interposer.dll", local_interposer_path, _countof(local_interposer_path)) &&
-        sl_path_exists(local_interposer_path, false)) {
-        dll_paths[num_dll_paths++] = local_interposer_path;
     }
 
     dll_paths[num_dll_paths++] = L"streamline\\bin\\x64\\sl.interposer.dll";
@@ -827,6 +827,7 @@ extern "C" qboolean SLDLSS_Evaluate(const streamline_dlss_evaluate_params_t *par
     memcpy(&consts.prevClipToClip, params->prev_clip_to_clip, sizeof(float) * 16);
     consts.jitterOffset = { params->jitter_offset_x, params->jitter_offset_y };
     consts.mvecScale = { params->mvec_scale_x, params->mvec_scale_y };
+    consts.cameraPinholeOffset = { 0.0f, 0.0f };
     consts.cameraPos = { params->camera_pos[0], params->camera_pos[1], params->camera_pos[2] };
     consts.cameraUp = { params->camera_up[0], params->camera_up[1], params->camera_up[2] };
     consts.cameraRight = { params->camera_right[0], params->camera_right[1], params->camera_right[2] };
