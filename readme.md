@@ -126,34 +126,71 @@ Note: Linux ppc64le is also known to work though not officially supported.
 
 ## Build Instructions
 
-  1. Clone the repository and its submodules from git :
+### Clone and submodules
 
-     `git clone --recursive https://github.com/NVIDIA/Q2RTX.git `
+  1. Clone **with submodules** so `extern/` dependencies are populated:
 
-  2. Create a build folder named `build` under the repository root (`Q2RTX/build`)     
+     `git clone --recursive https://github.com/NVIDIA/Q2RTX.git`
 
-     Note: this is required by the shader build rules.
+     If you already cloned without submodules, fetch them from the repository root:
 
-  3. Copy (or create a symbolic link) to the game assets folder (`Q2RTX/baseq2`) 
+     `git submodule update --init --recursive`
 
-     Note: the asset packages are required for the engine to run.
-     Specifically, the `blue_noise.pkz` and `q2rtx_media.pkz` files or their extracted contents.
-     The package files can be found in the [GitHub releases](https://github.com/NVIDIA/Q2RTX/releases) or in the published builds of Quake II RTX.
+     On Windows you can run the same step via the dev script: `.\dev.ps1 submodules` (see below).
 
-  4. Configure CMake with either the GUI or the command line and point the build at the `build` folder
-     created in step 2.
+### Windows: build with `dev.ps1` (recommended)
+
+From the repository root in **PowerShell**, use the dispatcher `dev.ps1`. It runs scripts under `scripts/dev/`, keeps the build directory at **`build/`** (required for shader rules), configures **Visual Studio 2022** x64 **RelWithDebInfo**, and places the main game executable at **`q2rtx.exe`** in the repository root.
+
+Prerequisites: **Visual Studio 2022** (C++ workload), **CMake**, **Vulkan SDK** installed with **`VULKAN_SDK`** set (the configure step checks this).
+
+| Command | Description |
+|---------|-------------|
+| `.\dev.ps1 submodules` | Initialize or update Git submodules (`git submodule update --init --recursive`). |
+| `.\dev.ps1 configure` | Run CMake configure (`-G "Visual Studio 17 2022" -A x64`, build tree `build/`). |
+| `.\dev.ps1 build` | Build the project (parallel, RelWithDebInfo). |
+| `.\dev.ps1 rebuild` | Clear `build/`, run configure, then build (full refresh). |
+| `.\dev.ps1 clean` | Delete generated files inside `build/` (then run `configure` again before building). |
+| `.\dev.ps1 clean-build` | Remove and reconfigure `build/` from scratch. |
+| `.\dev.ps1 shaders` | Compile Vulkan shaders into `baseq2/shader_vkpt/*.spv`. |
+| `.\dev.ps1 run` | Run `q2rtx.exe` with `+set vid_renderer vkpt` (build first). |
+| `.\dev.ps1 doctor` | Print environment / toolchain checks. |
+
+Typical first-time flow:
+
+```
+.\dev.ps1 configure
+.\dev.ps1 build
+```
+
+Then either run `.\dev.ps1 run` or launch `q2rtx.exe` from the repo root.
+
+### Linux and manual CMake (alternative)
+
+Use this path if you are not using the Windows scripts, or you prefer the CMake GUI / a different generator.
+
+  1. Ensure submodules are present (see above).
+
+  2. Create a folder named **`build`** under the repository root. This location is required by the shader build rules.
+
+  3. Configure from that folder:
 
      `cd build`  
      `cmake ..`
 
-     **Note**: only 64-bit builds are supported, so make sure to select a 64-bit generator during the initial configuration of CMake.
-     
-     Note 2: when CMake is configuring `curl`, it will print warnings like `Found no *nroff program`. These can be ignored.
+     **Note:** only **64-bit** builds are supported—pick a 64-bit generator when configuring.
 
-  5. Build with Visual Studio on Windows, make on Linux, or the CMake command
-     line:
+     When CMake configures `curl`, warnings such as `Found no *nroff program` can be ignored.
 
-     `cmake --build . `
+  4. Build:
+
+     `cmake --build . --parallel`
+
+     On Windows without `dev.ps1`, use Visual Studio to open the generated solution, or the same `cmake --build` command from `build/`.
+
+### Game assets (required to run, not to compile)
+
+Copy (or symlink) data into **`baseq2/`** before expecting the game to start. The engine needs **`blue_noise.pkz`** and **`q2rtx_media.pkz`** (or their extracted contents), and the original **`pak*.pak`** files for Quake II content. Packages are available from [GitHub Releases](https://github.com/NVIDIA/Q2RTX/releases) or a published Quake II RTX install.
 
 ## Music Playback Support
 
