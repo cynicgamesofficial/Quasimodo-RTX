@@ -5,24 +5,28 @@
 **New Features:**
 
   * **NVIDIA Reflex via Streamline** - Integrated NVIDIA Reflex low-latency mode using the Streamline SDK (manual hooking, dynamic loading). Reflex is optional: if `sl.interposer.dll` is missing, the game runs normally. New cvar `cl_reflex` (0 = Off, 1 = On, 2 = On + Boost). Sleep runs at the start of each frame; PCL markers (simulation, render, present) fire every frame for latency measurement.
-  * **Streamline ImGUI debugging** - When using development Streamline DLLs and `sl.interposer.json` with `loadAllFeatures: true`, the Streamline ImGUI overlay (Ctrl+Shift+Home) can be used to inspect Reflex state, marker usage, and sleep stats. See `docs/STREAMLINE_REFLEX.md` section 11.
+  * **DLAA mode exposure** - Added DLAA as a selectable mode through `pt_dlss_quality 4` while preserving SR modes `0..3` (Max Quality, Balanced, Max Performance, Ultra Performance).
+  * **Streamline ImGUI debugging** - When using development Streamline DLLs and `sl.interposer.json` with `loadAllFeatures: true`, the Streamline ImGUI overlay (Ctrl+Shift+Home) can be used to inspect Reflex state, marker usage, and sleep stats.
   * **Portable Streamline SDK root** - Added `STREAMLINE_ROOT` (`${PROJECT_SOURCE_DIR}/Third Parties/NVIDIA`) as the canonical repository-local SDK path for Windows Streamline integration.
+  * **Portable Streamline bootstrap script** - Added `download-streamline.ps1` to download and verify Streamline SDK v2.10.3 directly into `Third Parties/NVIDIA`.
 
 **Fixed Issues:**
 
   * Fixed Streamline Reflex ImGUI panel showing "Optimize with markers: No" - the wrapper now sets `sl::ReflexOptions::useMarkersToOptimize = true` so the Reflex plugin and driver use the application's PCL markers for sleep optimization.
   * Fixed Streamline "Invalid VK queue" / "No reflex" on supported NVIDIA hardware - three root causes: `slSetVulkanInfo` queue index was 0 (Streamline uses it as host queue count, must be 1); `NvLowLatencyVk.dll` was missing from the runtime directory; `VK_NV_low_latency` Vulkan device extension was not enabled. All three are now fixed.
   * Fixed Streamline one-time validation warning `consts.cameraPinholeOffset should not be left as invalid` by explicitly initializing `Constants::cameraPinholeOffset` to `{0.0f, 0.0f}` in the DLSS evaluate constants path.
+  * Fixed DLSS temporal input stability issues by hardening motion/depth metadata and adding a dedicated flattened depth surface for Streamline DLSS input.
+  * Fixed DLSS fullscreen/output sizing inconsistencies by locking SR sizing behavior and correcting extent/HDR input semantics around evaluation.
 
 **Misc Improvements:**
 
   * Build: added `sl.imgui.dll` and `NvLowLatencyVk.dll` to the Streamline POST_BUILD copy list. Gitignore updated for Streamline JSON debug configs (`sl.interposer.json`, `sl.common.json`, etc.).
-  * Documentation: `docs/STREAMLINE_REFLEX.md` - full Reflex integration notes, Vulkan proxy routing, frame flow, ImGUI debug setup, and design rules.
   * Streamline portability hardening:
     - Runtime plugin search paths now prefer executable-local `streamline/bin/x64` and then fall back to repository-local `Third Parties/NVIDIA/bin/x64` paths.
     - Interposer load fallback chain was updated to remove developer-machine absolute assumptions and use executable-relative/repo-relative candidates only.
     - Windows post-build deployment now copies the active Streamline runtime DLL set from `STREAMLINE_ROOT/bin/x64[/development]` to `streamline/bin/x64`, and places `sl.interposer.dll` next to `q2rtx.exe`.
-  * Added implementation and audit documentation for the March 21, 2026 Streamline portability and runtime-loading investigation in `docs/STREAMLINE_PORTABILITY_AND_AUDIT_2026-03-21.md`.
+  * Fresh-config defaults were updated for regeneration: Reflex defaults to `2` (On + Boost), antialiasing defaults to disabled, and FOV defaults to `90`.
+  * Repository cleanup: removed the tracked `docs/` folder and added the current project copyright line to `license.txt`.
 
 ---
 
