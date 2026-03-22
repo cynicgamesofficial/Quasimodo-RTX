@@ -2,17 +2,14 @@
 
 **Latest additions:** DLSS and NVIDIA Reflex support.
 
-## Project Discontinued
+## Engine Concept
 
-**This repository is no longer maintained.**
+Quasimodo RTX follows a FutureRetro engine concept: preserve classic Quake II gameplay identity on a GPL codebase while advancing modern engine/runtime capabilities.
 
-If you're looking for a downloadable installer for Quake II RTX, please visit the [Releases](https://github.com/NVIDIA/Q2RTX/releases) page.
-
-If you would like to make some improvements, feel free to fork this repository or look for other community projects based on Quake II RTX.
-
-<br>
-<br>
-<br>
+Current long-term focus:
+  - keep a stable and open GPL codebase for community collaboration
+  - evolve modern rendering and latency features (including DLSS and Reflex)
+  - improve portability, maintainability, and compatibility for long-term retro engine use
 
 ## Original README
 
