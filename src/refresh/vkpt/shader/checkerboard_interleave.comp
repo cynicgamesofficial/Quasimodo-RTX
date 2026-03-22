@@ -138,6 +138,8 @@ void main()
     if (opos.x >= global_ubo.width || opos.y >= global_ubo.height)
     {
         imageStore(IMG_FLAT_COLOR, opos, vec4(0));
+        imageStore(IMG_FLAT_MOTION, opos, vec4(0));
+        imageStore(IMG_FLAT_DEPTH, opos, vec4(0));
         return;
     }
 
@@ -184,4 +186,13 @@ void main()
         imageStore(IMG_FLAT_MOTION, opos, imageLoad(IMG_PT_MOTION, ipos));
     else
         imageStore(IMG_FLAT_MOTION, opos, imageLoad(IMG_PT_MOTION, ipos + ivec2(other_side_offset, 0)));
+
+    float depth;
+    if (use_center_mv)
+        depth = imageLoad(IMG_PT_VIEW_DEPTH_A, ipos).x;
+    else
+        depth = imageLoad(IMG_PT_VIEW_DEPTH_A, ipos + ivec2(other_side_offset, 0)).x;
+
+    // Reflection/refraction paths can encode depth with a sign flip; DLSS expects a positive view-depth signal.
+    imageStore(IMG_FLAT_DEPTH, opos, vec4(abs(depth)));
 }
