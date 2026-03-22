@@ -1,4 +1,4 @@
-name: Build
+name: Quasimodo RTX Build
 
 on:
   push:

@@ -1,4 +1,4 @@
-# Quake II RTX
+# Quasimodo RTX
 
 ## Project Discontinued
 
