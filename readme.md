@@ -1,4 +1,6 @@
-# Quake II RTX
+# Quasimodo RTX
+
+**Latest additions:** DLSS and NVIDIA Reflex support.
 
 ## Project Discontinued
 
