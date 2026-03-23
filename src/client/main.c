@@ -3238,15 +3238,13 @@ CL_Frame
 unsigned CL_Frame(unsigned msec)
 {
     bool phys_frame = true, ref_frame = true;
+    bool reflex_frame = false;
 
     time_after_ref = time_before_ref = 0;
 
     if (!cl_running->integer) {
         return UINT_MAX;
     }
-
-    if (cls.ref_initialized && R_Reflex_SleepAtFrameStart)
-        R_Reflex_SleepAtFrameStart();
 
     main_extra += msec;
     cls.realtime += msec;
@@ -3305,6 +3303,13 @@ unsigned CL_Frame(unsigned msec)
                    main_extra, ref_frame, ref_extra,
                    phys_frame, phys_extra);
 
+    if (ref_frame && cls.ref_initialized && !cls.disable_screen && R_Reflex_SleepAtFrameStart) {
+        R_Reflex_SleepAtFrameStart();
+        if (R_Reflex_ProcessQueuedPCLPing)
+            R_Reflex_ProcessQueuedPCLPing();
+        reflex_frame = true;
+    }
+
     // decide the simulation time
     cls.frametime = main_extra * 0.001f;
 
@@ -3334,6 +3339,9 @@ unsigned CL_Frame(unsigned msec)
     // resend a connection request if necessary
     CL_CheckForResend();
 
+    if (reflex_frame && R_Reflex_MarkerSimulationStart)
+        R_Reflex_MarkerSimulationStart();
+
     // read user intentions
     CL_UpdateCmd(main_extra);
 
@@ -3356,6 +3364,9 @@ unsigned CL_Frame(unsigned msec)
 
     // predict all unacknowledged movements
     CL_PredictMovement();
+
+    if (reflex_frame && R_Reflex_MarkerSimulationEnd)
+        R_Reflex_MarkerSimulationEnd();
 
     Con_RunConsole();
 
