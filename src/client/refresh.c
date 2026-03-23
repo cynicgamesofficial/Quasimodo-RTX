@@ -495,6 +495,11 @@ bool(*R_InterceptKey)(unsigned key, bool down) = NULL;
 bool(*R_IsHDR)(void) = NULL;
 
 void(*R_Reflex_SleepAtFrameStart)(void) = NULL;
+void(*R_Reflex_MarkerSimulationStart)(void) = NULL;
+void(*R_Reflex_MarkerSimulationEnd)(void) = NULL;
+uint32_t(*R_Reflex_GetStatsWindowMessage)(void) = NULL;
+void(*R_Reflex_QueuePCLPing)(void) = NULL;
+void(*R_Reflex_ProcessQueuedPCLPing)(void) = NULL;
 void(*R_Reflex_TriggerFlash)(void) = NULL;
 
 bool (*R_SupportsDebugLines)(void) = NULL;
