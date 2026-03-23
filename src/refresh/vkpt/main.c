@@ -95,6 +95,7 @@ cvar_t* cvar_min_driver_version_nvidia = NULL;
 cvar_t* cvar_min_driver_version_amd = NULL;
 cvar_t* cl_reflex = NULL;
 static ReflexMode last_reflex_mode = REFLEX_MODE_OFF;
+static bool reflex_pcl_ping_queued = false;
 cvar_t *cvar_ray_tracing_api = NULL;
 cvar_t *cvar_vk_validation = NULL;
 cvar_t *cvar_pt_dlss = NULL;
@@ -3899,10 +3900,6 @@ R_BeginFrame_RTX(void)
 		}
 	}
 
-	SLReflex_Marker_SimStart(reflex_frame_id);
-	SLReflex_Marker_SimEnd(reflex_frame_id);
-	SLReflex_Marker_RenderStart(reflex_frame_id);
-
 	int dlss_enable = cvar_pt_dlss ? cvar_pt_dlss->integer : 0;
 	int dlss_quality = cvar_pt_dlss_quality ? cvar_pt_dlss_quality->integer : 0;
 	if (dlss_enable != dlss_last_enable || dlss_quality != dlss_last_quality)
@@ -4067,6 +4064,8 @@ R_EndFrame_RTX(void)
 		vkpt_draw_clear_stretch_pics();
 		return;
 	}
+
+	SLReflex_Marker_RenderStart(reflex_frame_id);
 
 	if(cvar_profiler->integer)
 		draw_profiler(cvar_flt_enable->integer != 0);
@@ -5099,9 +5098,42 @@ static void R_Reflex_SleepAtFrameStart_RTX(void)
 		SLReflex_Sleep();
 }
 
+static void R_Reflex_MarkerSimulationStart_RTX(void)
+{
+	if (sl_reflex.initialized)
+		SLReflex_Marker_SimStart(reflex_frame_id);
+}
+
+static void R_Reflex_MarkerSimulationEnd_RTX(void)
+{
+	if (sl_reflex.initialized)
+		SLReflex_Marker_SimEnd(reflex_frame_id);
+}
+
+static uint32_t R_Reflex_GetStatsWindowMessage_RTX(void)
+{
+	if (!sl_reflex.initialized)
+		return 0;
+	return sl_reflex.statsWindowMessage;
+}
+
+static void R_Reflex_QueuePCLPing_RTX(void)
+{
+	if (!sl_reflex.initialized)
+		return;
+	reflex_pcl_ping_queued = true;
+}
+
+static void R_Reflex_ProcessQueuedPCLPing_RTX(void)
+{
+	if (!sl_reflex.initialized || !reflex_pcl_ping_queued)
+		return;
+	SLReflex_Marker_InputSample(reflex_frame_id);
+	reflex_pcl_ping_queued = false;
+}
+
 static void R_Reflex_TriggerFlash_RTX(void)
 {
-	SLReflex_Marker_InputSample(reflex_frame_id);
 	SLReflex_Marker_TriggerFlash(reflex_frame_id);
 }
 
@@ -5140,6 +5172,11 @@ void R_RegisterFunctionsRTX()
 	R_InterceptKey = R_InterceptKey_RTX;
 	R_IsHDR = R_IsHDR_RTX;
 	R_Reflex_SleepAtFrameStart = R_Reflex_SleepAtFrameStart_RTX;
+	R_Reflex_MarkerSimulationStart = R_Reflex_MarkerSimulationStart_RTX;
+	R_Reflex_MarkerSimulationEnd = R_Reflex_MarkerSimulationEnd_RTX;
+	R_Reflex_GetStatsWindowMessage = R_Reflex_GetStatsWindowMessage_RTX;
+	R_Reflex_QueuePCLPing = R_Reflex_QueuePCLPing_RTX;
+	R_Reflex_ProcessQueuedPCLPing = R_Reflex_ProcessQueuedPCLPing_RTX;
 	R_Reflex_TriggerFlash = R_Reflex_TriggerFlash_RTX;
 	IMG_Load = IMG_Load_RTX;
 	IMG_Unload = IMG_Unload_RTX;
