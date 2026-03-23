@@ -243,6 +243,8 @@ static void query_reflex_state(void)
     sl::ReflexState state{};
     if (p_slReflexGetState(state) == sl::Result::eOk) {
         sl_reflex.lowLatencyAvailable = state.lowLatencyAvailable ? qtrue : qfalse;
+        sl_reflex.latencyReportAvailable = state.latencyReportAvailable ? qtrue : qfalse;
+        sl_reflex.statsWindowMessage = state.statsWindowMessage;
     }
 }
 
@@ -569,6 +571,7 @@ extern "C" void SLReflex_Sleep(void)
     sl_reflex.frameCounter++;
 
     p_slReflexSleep(*s_frame_token);
+    query_reflex_state();
 }
 
 extern "C" void SLReflex_SetMode(ReflexMode mode, uint32_t frameLimitUs)

@@ -31,6 +31,8 @@ typedef struct {
     qboolean  initialized;
     qboolean  supported;
     qboolean  lowLatencyAvailable;
+    qboolean  latencyReportAvailable;
+    uint32_t  statsWindowMessage;
     ReflexMode mode;
     uint64_t  frameCounter;
 } streamline_reflex_state_t;
