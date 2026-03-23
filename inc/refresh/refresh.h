@@ -352,6 +352,11 @@ extern bool    (*R_InterceptKey)(unsigned key, bool down);
 extern bool    (*R_IsHDR)(void);
 
 extern void    (*R_Reflex_SleepAtFrameStart)(void);
+extern void    (*R_Reflex_MarkerSimulationStart)(void);
+extern void    (*R_Reflex_MarkerSimulationEnd)(void);
+extern uint32_t (*R_Reflex_GetStatsWindowMessage)(void);
+extern void    (*R_Reflex_QueuePCLPing)(void);
+extern void    (*R_Reflex_ProcessQueuedPCLPing)(void);
 extern void    (*R_Reflex_TriggerFlash)(void);
 
 #if REF_GL
