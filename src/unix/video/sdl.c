@@ -35,6 +35,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "system/system.h"
 #include "../res/q2pro.xbm"
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
 #include <SDL2/SDL_vulkan.h>
 
 #ifdef _WINDOWS
@@ -352,6 +353,9 @@ static bool init(graphics_api_t api)
 #endif
 
     SDL_SetEventFilter(my_event_filter, NULL);
+#ifdef _WIN32
+    SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
+#endif
 
 	if (!VID_GetGeometry(&rc)) {
 		rc.x = SDL_WINDOWPOS_UNDEFINED;
@@ -569,6 +573,26 @@ static void mouse_wheel_event(SDL_MouseWheelEvent *event)
     }
 }
 
+static void syswm_event(SDL_SysWMEvent *event)
+{
+#ifdef _WIN32
+    if (!event || !event->msg)
+        return;
+    if (event->msg->subsystem != SDL_SYSWM_WINDOWS)
+        return;
+    if (!R_Reflex_GetStatsWindowMessage || !R_Reflex_QueuePCLPing)
+        return;
+
+    uint32_t reflex_msg = R_Reflex_GetStatsWindowMessage();
+    if (!reflex_msg)
+        return;
+    if (event->msg->msg.win.msg == reflex_msg)
+        R_Reflex_QueuePCLPing();
+#else
+    (void)event;
+#endif
+}
+
 static void pump_events(void)
 {
     SDL_Event    event;
@@ -596,6 +620,9 @@ static void pump_events(void)
             break;
         case SDL_MOUSEWHEEL:
             mouse_wheel_event(&event.wheel);
+            break;
+        case SDL_SYSWMEVENT:
+            syswm_event(&event.syswm);
             break;
         }
     }
