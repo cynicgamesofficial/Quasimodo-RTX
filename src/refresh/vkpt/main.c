@@ -185,6 +185,8 @@ VkptInit_t vkpt_initialization[] = {
 	{ "vbo|",     vkpt_vertex_buffer_create_pipelines, vkpt_vertex_buffer_destroy_pipelines, VKPT_INIT_RELOAD_SHADER,      0 },
 	{ "asvgf",    vkpt_asvgf_initialize,               vkpt_asvgf_destroy,                   VKPT_INIT_DEFAULT,            0 },
 	{ "asvgf|",   vkpt_asvgf_create_pipelines,         vkpt_asvgf_destroy_pipelines,         VKPT_INIT_RELOAD_SHADER,      0 },
+	{ "restir",   vkpt_restir_di_initialize,            vkpt_restir_di_destroy,               VKPT_INIT_DEFAULT,            0 },
+	{ "restir|",  vkpt_restir_di_create_pipelines,      vkpt_restir_di_destroy_pipelines,     VKPT_INIT_RELOAD_SHADER,      0 },
 	{ "bloom",    vkpt_bloom_initialize,               vkpt_bloom_destroy,                   VKPT_INIT_DEFAULT,            0 },
 	{ "bloom|",   vkpt_bloom_create_pipelines,         vkpt_bloom_destroy_pipelines,         VKPT_INIT_RELOAD_SHADER,      0 },
 	{ "tonemap",  vkpt_tone_mapping_initialize,        vkpt_tone_mapping_destroy,            VKPT_INIT_DEFAULT,            0 },

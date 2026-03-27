@@ -104,6 +104,7 @@ cvar_t*                      cvar_pt_enable_sprites = NULL;
 
 extern cvar_t *cvar_pt_caustics;
 extern cvar_t *cvar_pt_reflect_refract;
+extern cvar_t *cvar_pt_restir_di;
 
 
 typedef struct QvkGeometryInstance_s {
@@ -1115,6 +1116,11 @@ vkpt_pt_trace_reflections(VkCommandBuffer cmd_buf, int bounce)
 VkResult
 vkpt_pt_trace_lighting(VkCommandBuffer cmd_buf, float num_bounce_rays)
 {
+	if(cvar_pt_restir_di->integer != 0)
+	{
+		vkpt_restir_di_dispatch(cmd_buf);
+	}
+
 	BEGIN_PERF_MARKER(cmd_buf, PROFILER_DIRECT_LIGHTING);
 
 	for (int i = 0; i < qvk.device_count; i++)

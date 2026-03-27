@@ -34,8 +34,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
  *        Encoding: lightData = isDynamic ? ((1u << 13) | dynIdx) : polyIdx
  *
  *   .y = floatBitsToUint(targetPdf)
- *        The target function p-hat evaluated at the selected sample.
- *        For Milestone 1 this is: luminance(unshadowed_radiance * BRDF * NdotL).
+ *        The pure target function p-hat evaluated at the selected sample.
+ *        Polygon lights:  spherical_tri_area * luminance(|emission|) * style.
+ *        Dynamic lights:  luminance(color) * sphere_irradiance * NdotL.
+ *        Evaluated by evaluate_restir_target(); must never contain 1/source_pdf.
  *        Stored as float to avoid precision loss at low values.
  *
  *   .z = M (sample count)
@@ -213,6 +215,68 @@ uint
 restir_get_light_index(uint lightData)
 {
 	return lightData & 0x1FFFu; // lower 13 bits
+}
+
+/*
+ * Evaluate the target function p-hat for a stored light at an arbitrary surface.
+ *
+ * Used during both initial candidate generation and temporal re-evaluation.
+ * This is the SOLE definition of the target function; both passes must agree.
+ *
+ * Polygon lights:  spherical_tri_area * luminance(|emission|) * style
+ * Dynamic lights:  sphere-irradiance  * luminance(color)      * NdotL
+ *
+ * Returns 0 if the light is invisible from the surface.
+ */
+float
+evaluate_restir_target(uint lightData,
+	vec3 position, vec3 normal, vec3 geo_normal, vec3 view_dir,
+	float phong_exp, float phong_scale, float phong_weight)
+{
+	if(restir_is_dynamic_light(lightData))
+	{
+		uint dyn_idx = restir_get_light_index(lightData);
+		if(dyn_idx >= global_ubo.num_dyn_lights)
+			return 0.0;
+
+		vec3  center = global_ubo.dyn_light_data[dyn_idx].center;
+		vec3  color  = global_ubo.dyn_light_data[dyn_idx].color;
+		float radius = global_ubo.dyn_light_data[dyn_idx].radius;
+
+		vec3  c     = center - position;
+		float dist  = length(c);
+		float rdist = 1.0 / max(dist, 1e-6);
+		vec3  L     = c * rdist;
+		float NdotL = max(0.0, dot(normal, L));
+
+		if(dot(L, geo_normal) <= 0.0)
+			return 0.0;
+
+		// Approximate irradiance from a sphere (same formula as compute_dynlight_sphere)
+		float irradiance = 2.0 * (1.0 - sqrt(max(0.0, 1.0 - square(radius * rdist))));
+
+		return luminance(color) * irradiance * NdotL;
+	}
+	else
+	{
+		uint poly_idx = restir_get_light_index(lightData);
+		if(poly_idx >= MAX_LIGHT_POLYS)
+			return 0.0;
+
+		LightPolygon light = get_light_polygon(poly_idx);
+
+		// Sky polygon lights encode a negative sentinel in light.color ---
+		// not supported in Milestone 1.
+		if(light.color.r < 0.0)
+			return 0.0;
+
+		// spherical_tri_area already includes a BRDF-weighted factor
+		float area = spherical_tri_area(light.positions, position, normal, view_dir,
+			phong_exp, phong_scale, phong_weight);
+		float light_lum = luminance(abs(light.color)) * light.light_style_scale;
+
+		return area * light_lum;
+	}
 }
 
 #endif /* _RESTIR_DI_GLSL */

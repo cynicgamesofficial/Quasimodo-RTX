@@ -273,6 +273,7 @@ SET(SRC_VKPT
 	refresh/vkpt/physical_sky.c
 	refresh/vkpt/precomputed_sky.c
 	refresh/vkpt/profiler.c
+	refresh/vkpt/restir_di.c
 	refresh/vkpt/shadow_map.c
 	refresh/vkpt/textures.c
 	refresh/vkpt/tone_mapping.c
@@ -324,6 +325,8 @@ set(SRC_SHADERS
 	refresh/vkpt/shader/asvgf_temporal.comp
 	refresh/vkpt/shader/instance_geometry.comp
 	refresh/vkpt/shader/normalize_normal_map.comp
+	refresh/vkpt/shader/restir_di_initial.comp
+	refresh/vkpt/shader/restir_di_temporal.comp
 	refresh/vkpt/shader/tone_mapping_histogram.comp
 	refresh/vkpt/shader/tone_mapping_curve.comp
     refresh/vkpt/shader/tone_mapping_apply.comp

@@ -1,0 +1,197 @@
+/*
+Copyright (C) 2026 Quasimodo-RTX contributors.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// ========================================================================== //
+// ReSTIR DI - Temporal reuse.
+//
+// For each pixel: load the current initial reservoir (RESERVOIR_A, written by
+// restir_di_initial.comp), reproject to the previous frame via motion vectors,
+// load the previous accumulated reservoir (RESERVOIR_B), check surface
+// similarity, re-evaluate the previous light's target at the current surface,
+// combine, and write the result back to RESERVOIR_A.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#include "utils.glsl"
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 2
+#define VERTEX_READONLY 1
+#include "vertex_buffer.h"
+
+#include "brdf.glsl"
+
+// ---- Replicated from path_tracer_rgen.h (cannot include in compute) ---- //
+
+#define RNG_SEED_SHIFT_X       0u
+#define RNG_SEED_SHIFT_Y       8u
+#define RNG_SEED_SHIFT_ISODD  16u
+#define RNG_SEED_SHIFT_FRAME  17u
+
+uint rng_seed;
+
+float
+get_rng(uint idx)
+{
+	uvec3 p = uvec3(rng_seed >> RNG_SEED_SHIFT_X, rng_seed >> RNG_SEED_SHIFT_Y, rng_seed >> RNG_SEED_SHIFT_ISODD);
+	p.z = (p.z >> 1) + (p.z & 1);
+	p.z = (p.z + idx);
+	p &= uvec3(BLUE_NOISE_RES - 1, BLUE_NOISE_RES - 1, NUM_BLUE_NOISE_TEX - 1);
+	return min(texelFetch(TEX_BLUE_NOISE, ivec3(p), 0).r, 0.9999999999999);
+}
+
+vec3
+env_map(vec3 direction, bool remove_sun)
+{
+	direction = (global_ubo.environment_rotation_matrix * vec4(direction, 0)).xyz;
+	vec3 envmap = vec3(0);
+	if(global_ubo.environment_type == ENVIRONMENT_DYNAMIC)
+	{
+		envmap = textureLod(TEX_PHYSICAL_SKY, direction.xzy, 0).rgb;
+		if(remove_sun)
+			envmap = min(envmap, vec3((1 - dot(direction, global_ubo.sun_direction_envmap)) * 200));
+	}
+	else if(global_ubo.environment_type == ENVIRONMENT_STATIC)
+	{
+		envmap = textureLod(TEX_ENVMAP, direction.xzy, 0).rgb;
+		float avg = (envmap.x + envmap.y + envmap.z) / 3.0;
+		envmap = mix(envmap, avg.xxx, global_ubo.pt_envmap_desaturate) * global_ubo.pt_envmap_brightness;
+	}
+	return envmap;
+}
+
+// ---- End replicated block ---- //
+
+#include "light_lists.h"
+#include "restir_di.glsl"
+
+// RNG stream index for the temporal combine random number.
+#define RNG_RESTIR_TEMPORAL_COMBINE 58
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+
+	if(ipos.x >= global_ubo.current_gpu_slice_width || ipos.y >= global_ubo.height)
+		return;
+
+	// Skip temporal reuse when the engine signals invalid history
+	// (first frame, map load, resize).  main.c zeroes flt_temporal_lf
+	// in exactly those cases --- same signal that ASVGF uses.
+	if(global_ubo.flt_temporal_lf == 0.0)
+		return;
+
+	// Load current reservoir (initial pass output)
+	Reservoir current = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, ipos));
+
+	// Nothing to combine if the initial pass produced an empty reservoir
+	if(current.M == 0)
+		return;
+
+	// Current surface for similarity check
+	float depth_curr  = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	vec3  normal_curr = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+
+	// ---- Reproject to previous frame (checkerboard coordinates) ---- //
+	vec4  motion   = texelFetch(TEX_PT_MOTION, ipos, 0);
+	vec2  pos_prev = ((vec2(ipos) + vec2(0.5))
+		* vec2(global_ubo.inv_width * 2.0, global_ubo.inv_height)
+		+ motion.xy)
+		* vec2(global_ubo.prev_width / 2, global_ubo.prev_height);
+
+	ivec2 ipos_prev = ivec2(floor(pos_prev));
+
+	// Out-of-bounds → keep initial reservoir as-is
+	if(ipos_prev.x < 0 || ipos_prev.y < 0 ||
+	   ipos_prev.x >= global_ubo.prev_gpu_slice_width ||
+	   ipos_prev.y >= global_ubo.prev_height)
+		return;
+
+	// Previous reservoir
+	Reservoir prev = reservoir_unpack(texelFetch(TEX_RESTIR_RESERVOIR_B, ipos_prev, 0));
+
+	// Nothing to reuse
+	if(prev.M == 0)
+		return;
+
+	// Surface similarity gate
+	float depth_prev  = texelFetch(TEX_PT_VIEW_DEPTH_B, ipos_prev, 0).x;
+	vec3  normal_prev = decode_normal(texelFetch(TEX_PT_NORMAL_B, ipos_prev, 0).x);
+
+	if(!restir_surface_similar(normal_curr, normal_prev, depth_curr, depth_prev))
+		return;
+
+	// Clamp previous M to bound temporal drift
+	prev.M = min(prev.M, RESTIR_M_CAP);
+
+	// ---- Full surface data for target re-evaluation ---- //
+	vec3  position   = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0).xyz;
+	vec3  geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+	vec3  view_dir   = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
+
+	vec4  base_color  = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+	vec2  metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
+	float roughness   = metal_rough.y;
+	float alpha       = roughness * roughness;
+	float phong_exp   = RoughnessSquareToSpecPower(alpha);
+	float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
+	float specular_factor = base_color.a;
+	float metallic    = metal_rough.x;
+	vec3  albedo, base_reflectivity;
+	get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
+	float phong_weight = clamp(
+		specular_factor * luminance(base_reflectivity) /
+		max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
+		0.0, 0.9);
+
+	// Re-evaluate previous light at current surface
+	float targetPdf_b_at_a = evaluate_restir_target(prev.lightData,
+		position, normal_curr, geo_normal, view_dir,
+		phong_exp, phong_scale, phong_weight);
+
+	// Previous light invisible from current surface → skip
+	if(targetPdf_b_at_a <= 0.0)
+		return;
+
+	// Reconstruct current reservoir's running weight sum:
+	//   weightSumA = current.targetPdf * current.W * float(current.M)
+	float weightSumA = current.targetPdf * current.W * float(current.M);
+
+	// RNG for the combine coin-flip
+	rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
+	float rng = get_rng(RNG_RESTIR_TEMPORAL_COMBINE);
+
+	// Combine
+	reservoir_combine(current, weightSumA, prev, targetPdf_b_at_a, rng);
+
+	// Finalize combined reservoir
+	reservoir_finalize(current, weightSumA);
+
+	imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(current));
+}

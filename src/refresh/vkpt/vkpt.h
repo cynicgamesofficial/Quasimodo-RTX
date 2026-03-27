@@ -103,6 +103,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	SHADER_MODULE_DO(QVK_MOD_NORMALIZE_NORMAL_MAP_COMP)              \
 	SHADER_MODULE_DO(QVK_MOD_DEBUG_LINE_FRAG)                        \
 	SHADER_MODULE_DO(QVK_MOD_DEBUG_LINE_VERT)                        \
+	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_INITIAL_COMP)                \
+	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_TEMPORAL_COMP)               \
 
 #define LIST_RT_RGEN_SHADER_MODULES \
 	SHADER_MODULE_DO(QVK_MOD_PRIMARY_RAYS_RGEN)                      \
@@ -683,6 +685,12 @@ VkResult vkpt_asvgf_initialize(void);
 VkResult vkpt_asvgf_destroy(void);
 VkResult vkpt_asvgf_create_pipelines(void);
 VkResult vkpt_asvgf_destroy_pipelines(void);
+
+VkResult vkpt_restir_di_initialize(void);
+VkResult vkpt_restir_di_destroy(void);
+VkResult vkpt_restir_di_create_pipelines(void);
+VkResult vkpt_restir_di_destroy_pipelines(void);
+VkResult vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf);
 VkResult vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf);
 VkResult vkpt_compositing(VkCommandBuffer cmd_buf);
 VkResult vkpt_interleave(VkCommandBuffer cmd_buf);

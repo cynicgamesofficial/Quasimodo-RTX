@@ -1,0 +1,249 @@
+/*
+Copyright (C) 2026 Quasimodo-RTX contributors.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// ========================================================================== //
+// ReSTIR DI - Initial candidate generation.
+//
+// Per pixel: sample 1 polygon light (cluster CDF) and 1 dynamic light
+// (uniform), stream both into a reservoir via RIS, write to RESERVOIR_A.
+//
+// The reservoir is later refined by restir_di_temporal.comp and consumed
+// during shading in direct_lighting.rgen (Patch 3).
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#include "utils.glsl"
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 2
+#define VERTEX_READONLY 1
+#include "vertex_buffer.h"
+
+#include "brdf.glsl"
+
+// ---- Replicated from path_tracer_rgen.h (cannot include in compute) ---- //
+
+#define RNG_SEED_SHIFT_X       0u
+#define RNG_SEED_SHIFT_Y       8u
+#define RNG_SEED_SHIFT_ISODD  16u
+#define RNG_SEED_SHIFT_FRAME  17u
+
+uint rng_seed;
+
+float
+get_rng(uint idx)
+{
+	uvec3 p = uvec3(rng_seed >> RNG_SEED_SHIFT_X, rng_seed >> RNG_SEED_SHIFT_Y, rng_seed >> RNG_SEED_SHIFT_ISODD);
+	p.z = (p.z >> 1) + (p.z & 1);
+	p.z = (p.z + idx);
+	p &= uvec3(BLUE_NOISE_RES - 1, BLUE_NOISE_RES - 1, NUM_BLUE_NOISE_TEX - 1);
+	return min(texelFetch(TEX_BLUE_NOISE, ivec3(p), 0).r, 0.9999999999999);
+}
+
+vec3
+env_map(vec3 direction, bool remove_sun)
+{
+	direction = (global_ubo.environment_rotation_matrix * vec4(direction, 0)).xyz;
+	vec3 envmap = vec3(0);
+	if(global_ubo.environment_type == ENVIRONMENT_DYNAMIC)
+	{
+		envmap = textureLod(TEX_PHYSICAL_SKY, direction.xzy, 0).rgb;
+		if(remove_sun)
+			envmap = min(envmap, vec3((1 - dot(direction, global_ubo.sun_direction_envmap)) * 200));
+	}
+	else if(global_ubo.environment_type == ENVIRONMENT_STATIC)
+	{
+		envmap = textureLod(TEX_ENVMAP, direction.xzy, 0).rgb;
+		float avg = (envmap.x + envmap.y + envmap.z) / 3.0;
+		envmap = mix(envmap, avg.xxx, global_ubo.pt_envmap_desaturate) * global_ubo.pt_envmap_brightness;
+	}
+	return envmap;
+}
+
+// ---- End replicated block ---- //
+
+#include "light_lists.h"
+#include "restir_di.glsl"
+
+// RNG stream indices for ReSTIR – start at 50 to avoid collision with the
+// legacy path tracer streams (4 + 9*bounce, bounce 0..4 → indices 4..49).
+#define RNG_RESTIR_LIGHT_SEL  50
+#define RNG_RESTIR_TRI_X      51
+#define RNG_RESTIR_TRI_Y      52
+#define RNG_RESTIR_DYN_SEL    53
+#define RNG_RESTIR_DYN_X      54
+#define RNG_RESTIR_DYN_Y      55
+#define RNG_RESTIR_INSERT_0   56
+#define RNG_RESTIR_INSERT_1   57
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+
+	if(ipos.x >= global_ubo.current_gpu_slice_width || ipos.y >= global_ubo.height)
+		return;
+
+	// Sky / empty pixels → write empty reservoir
+	float view_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	if(view_depth == 0)
+	{
+		imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(reservoir_empty()));
+		return;
+	}
+
+	// Load surface data
+	vec3 position    = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0).xyz;
+	vec3 normal      = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+	vec3 geo_normal  = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+	vec3 view_dir    = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
+	uint cluster_idx = texelFetch(TEX_PT_CLUSTER_A, ipos, 0).x;
+	if(cluster_idx == 0xffffu)
+		cluster_idx = ~0u;
+
+	// BRDF params for CDF weighting (phong model in spherical_tri_area)
+	vec4 base_color  = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+	vec2 metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
+	float roughness  = metal_rough.y;
+	float alpha      = roughness * roughness;
+	float phong_exp  = RoughnessSquareToSpecPower(alpha);
+	float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
+	float specular_factor = base_color.a;
+	float metallic   = metal_rough.x;
+	vec3 albedo, base_reflectivity;
+	get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
+	float phong_weight = clamp(
+		specular_factor * luminance(base_reflectivity) /
+		max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
+		0.0, 0.9);
+
+	// Per-pixel RNG
+	rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
+
+	bool is_gradient = false;
+
+	Reservoir r = reservoir_empty();
+	float weightSum = 0.0;
+
+	// ---- Candidate 1: polygon light from cluster CDF ---- //
+	if(global_ubo.pt_direct_polygon_lights > 0)
+	{
+		vec3  pos_on_light;
+		vec3  light_color;
+		int   poly_light_index;
+		float pdfw;
+		bool  is_sky;
+
+		vec3 rng = vec3(
+			get_rng(RNG_RESTIR_LIGHT_SEL),
+			get_rng(RNG_RESTIR_TRI_X),
+			get_rng(RNG_RESTIR_TRI_Y));
+
+		sample_polygonal_lights(
+			cluster_idx, position, normal, geo_normal,
+			view_dir, phong_exp, phong_scale, phong_weight,
+			is_gradient,
+			pos_on_light, light_color, poly_light_index, pdfw, is_sky, rng);
+
+		if(poly_light_index >= 0 && pdfw > 0 && !is_sky)
+		{
+			uint lightData = restir_encode_polygon_light(uint(poly_light_index));
+
+			// Pure target function -- same definition used by temporal re-evaluation.
+			float target_pdf = evaluate_restir_target(lightData,
+				position, normal, geo_normal, view_dir,
+				phong_exp, phong_scale, phong_weight);
+
+			if(target_pdf > 0.0)
+			{
+				// Derive ris_weight = target_pdf / source_pdf.
+				//
+				// sample_polygonal_lights returns:
+				//   light_color = emission * (1/pdfw) * spotlight * style / pdf_cdf
+				// so source_pdf = pdf_cdf * pdfw
+				//               = lum(|emission|) * spotlight * style / lum(|light_color|)
+				LightPolygon lp = get_light_polygon(poly_light_index);
+				vec3  L  = normalize(pos_on_light - position);
+				vec3  e1 = lp.positions[1] - lp.positions[0];
+				vec3  e2 = lp.positions[2] - lp.positions[0];
+				float spotlight = sqrt(max(0.0, -dot(normalize(cross(e1, e2)), L)));
+
+				float denom = luminance(abs(lp.color)) * spotlight * lp.light_style_scale;
+				float ris_weight = (denom > 1e-10)
+					? target_pdf * luminance(abs(light_color)) / denom
+					: 0.0;
+
+				if(ris_weight > 0.0)
+					reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
+						get_rng(RNG_RESTIR_INSERT_0));
+			}
+		}
+	}
+
+	// ---- Candidate 2: dynamic light (uniform selection) ---- //
+	if(global_ubo.pt_direct_dyn_lights > 0 && global_ubo.num_dyn_lights > 0)
+	{
+		vec3 pos_on_light;
+		vec3 light_color;
+
+		vec3 rng = vec3(
+			get_rng(RNG_RESTIR_DYN_SEL),
+			get_rng(RNG_RESTIR_DYN_X),
+			get_rng(RNG_RESTIR_DYN_Y));
+
+		sample_dynamic_lights(
+			position, normal, geo_normal,
+			2.0 * M_PI,
+			pos_on_light, light_color, rng);
+
+		if(luminance(light_color) > 0)
+		{
+			// Reconstruct selected index -- same arithmetic as sample_dynamic_lights
+			uint dyn_idx = min(uint(global_ubo.num_dyn_lights) - 1u,
+				uint(rng.x * float(global_ubo.num_dyn_lights)));
+			uint lightData = restir_encode_dynamic_light(dyn_idx);
+
+			// Pure target function -- same definition used by temporal re-evaluation.
+			float target_pdf = evaluate_restir_target(lightData,
+				position, normal, geo_normal, view_dir,
+				phong_exp, phong_scale, phong_weight);
+
+			if(target_pdf > 0.0)
+			{
+				// source_pdf(dynamic) = 1 / num_dyn_lights
+				float ris_weight = target_pdf * float(global_ubo.num_dyn_lights);
+
+				reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
+					get_rng(RNG_RESTIR_INSERT_1));
+			}
+		}
+	}
+
+	reservoir_finalize(r, weightSum);
+	imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(r));
+}
