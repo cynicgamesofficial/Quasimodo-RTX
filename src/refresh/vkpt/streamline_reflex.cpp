@@ -509,7 +509,8 @@ extern "C" qboolean SLReflex_PostInit(VkInstance instance, VkPhysicalDevice phys
     initOpts.mode = sl::ReflexMode::eLowLatency;
     initOpts.frameLimitUs = 0;
     initOpts.useMarkersToOptimize = true;
-    p_slReflexSetOptions(initOpts);
+    sl::Result optRes = p_slReflexSetOptions(initOpts);
+    sl_reflex.mode_applied = (optRes == sl::Result::eOk) ? qtrue : qfalse;
 
     query_reflex_state();
 
@@ -575,8 +576,9 @@ extern "C" void SLReflex_SetMode(ReflexMode mode, uint32_t frameLimitUs)
     opts.frameLimitUs = frameLimitUs;
     opts.useMarkersToOptimize = true;
 
-    p_slReflexSetOptions(opts);
+    sl::Result optRes = p_slReflexSetOptions(opts);
     sl_reflex.mode = mode;
+    sl_reflex.mode_applied = (optRes == sl::Result::eOk) ? qtrue : qfalse;
 
     query_reflex_state();
 }
