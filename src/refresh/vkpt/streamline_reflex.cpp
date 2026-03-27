@@ -585,28 +585,26 @@ extern "C" void SLReflex_SetMode(ReflexMode mode, uint32_t frameLimitUs)
 /*  PCL Markers                                                       */
 /* ------------------------------------------------------------------ */
 
-static inline void set_marker(sl::PCLMarker marker, uint64_t frameId)
+static inline void set_marker(sl::PCLMarker marker)
 {
     if (!sl_reflex.initialized || !s_frame_token || !p_slPCLSetMarker)
         return;
     p_slPCLSetMarker(marker, *s_frame_token);
-    (void)frameId;
 }
 
-extern "C" void SLReflex_Marker_SimStart(uint64_t frameId)      { set_marker(sl::PCLMarker::eSimulationStart,     frameId); }
-extern "C" void SLReflex_Marker_SimEnd(uint64_t frameId)        { set_marker(sl::PCLMarker::eSimulationEnd,       frameId); }
-extern "C" void SLReflex_Marker_RenderStart(uint64_t frameId)   { set_marker(sl::PCLMarker::eRenderSubmitStart,   frameId); }
-extern "C" void SLReflex_Marker_RenderEnd(uint64_t frameId)     { set_marker(sl::PCLMarker::eRenderSubmitEnd,     frameId); }
-extern "C" void SLReflex_Marker_PresentStart(uint64_t frameId)  { set_marker(sl::PCLMarker::ePresentStart,        frameId); }
-extern "C" void SLReflex_Marker_PresentEnd(uint64_t frameId)    { set_marker(sl::PCLMarker::ePresentEnd,          frameId); }
-extern "C" void SLReflex_Marker_TriggerFlash(uint64_t frameId)  { set_marker(sl::PCLMarker::eTriggerFlash,        frameId); }
+extern "C" void SLReflex_Marker_SimStart(void)      { set_marker(sl::PCLMarker::eSimulationStart);     }
+extern "C" void SLReflex_Marker_SimEnd(void)        { set_marker(sl::PCLMarker::eSimulationEnd);       }
+extern "C" void SLReflex_Marker_RenderStart(void)   { set_marker(sl::PCLMarker::eRenderSubmitStart);   }
+extern "C" void SLReflex_Marker_RenderEnd(void)     { set_marker(sl::PCLMarker::eRenderSubmitEnd);     }
+extern "C" void SLReflex_Marker_PresentStart(void)  { set_marker(sl::PCLMarker::ePresentStart);        }
+extern "C" void SLReflex_Marker_PresentEnd(void)    { set_marker(sl::PCLMarker::ePresentEnd);          }
+extern "C" void SLReflex_Marker_TriggerFlash(void)  { set_marker(sl::PCLMarker::eTriggerFlash);        }
 
-extern "C" void SLReflex_Marker_InputSample(uint64_t frameId)
+extern "C" void SLReflex_Marker_InputSample(void)
 {
     if (!sl_reflex.initialized || !s_frame_token || !p_slPCLSetMarker)
         return;
     p_slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *s_frame_token);
-    (void)frameId;
 }
 
 extern "C" qboolean SLReflex_IsLowLatencyAvailable(void)

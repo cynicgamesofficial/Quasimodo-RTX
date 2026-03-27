@@ -135,15 +135,15 @@ void     SLReflex_Shutdown(void);
 void     SLReflex_Sleep(void);
 void     SLReflex_SetMode(ReflexMode mode, uint32_t frameLimitUs);
 
-void     SLReflex_Marker_SimStart(uint64_t frameId);
-void     SLReflex_Marker_SimEnd(uint64_t frameId);
-void     SLReflex_Marker_RenderStart(uint64_t frameId);
-void     SLReflex_Marker_RenderEnd(uint64_t frameId);
-void     SLReflex_Marker_PresentStart(uint64_t frameId);
-void     SLReflex_Marker_PresentEnd(uint64_t frameId);
+void     SLReflex_Marker_SimStart(void);
+void     SLReflex_Marker_SimEnd(void);
+void     SLReflex_Marker_RenderStart(void);
+void     SLReflex_Marker_RenderEnd(void);
+void     SLReflex_Marker_PresentStart(void);
+void     SLReflex_Marker_PresentEnd(void);
 
-void     SLReflex_Marker_InputSample(uint64_t frameId);
-void     SLReflex_Marker_TriggerFlash(uint64_t frameId);
+void     SLReflex_Marker_InputSample(void);
+void     SLReflex_Marker_TriggerFlash(void);
 
 qboolean SLReflex_IsLowLatencyAvailable(void);
 

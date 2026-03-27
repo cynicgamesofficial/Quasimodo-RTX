@@ -4065,7 +4065,7 @@ R_EndFrame_RTX(void)
 		return;
 	}
 
-	SLReflex_Marker_RenderStart(reflex_frame_id);
+	SLReflex_Marker_RenderStart();
 
 	if(cvar_profiler->integer)
 		draw_profiler(cvar_flt_enable->integer != 0);
@@ -4174,8 +4174,8 @@ R_EndFrame_RTX(void)
 	}
 #endif
 
-	SLReflex_Marker_RenderEnd(reflex_frame_id);
-	SLReflex_Marker_PresentStart(reflex_frame_id);
+	SLReflex_Marker_RenderEnd();
+	SLReflex_Marker_PresentStart();
 
 	VkResult res_present = SL_vkQueuePresentKHR
 		? SL_vkQueuePresentKHR(qvk.queue_graphics, &present_info)
@@ -4184,7 +4184,7 @@ R_EndFrame_RTX(void)
 		recreate_swapchain();
 	}
 
-	SLReflex_Marker_PresentEnd(reflex_frame_id);
+	SLReflex_Marker_PresentEnd();
 
 	qvk.frame_counter++;
 }
@@ -5101,13 +5101,13 @@ static void R_Reflex_SleepAtFrameStart_RTX(void)
 static void R_Reflex_MarkerSimulationStart_RTX(void)
 {
 	if (sl_reflex.initialized)
-		SLReflex_Marker_SimStart(reflex_frame_id);
+		SLReflex_Marker_SimStart();
 }
 
 static void R_Reflex_MarkerSimulationEnd_RTX(void)
 {
 	if (sl_reflex.initialized)
-		SLReflex_Marker_SimEnd(reflex_frame_id);
+		SLReflex_Marker_SimEnd();
 }
 
 static uint32_t R_Reflex_GetStatsWindowMessage_RTX(void)
@@ -5128,13 +5128,13 @@ static void R_Reflex_ProcessQueuedPCLPing_RTX(void)
 {
 	if (!sl_reflex.initialized || !reflex_pcl_ping_queued)
 		return;
-	SLReflex_Marker_InputSample(reflex_frame_id);
+	SLReflex_Marker_InputSample();
 	reflex_pcl_ping_queued = false;
 }
 
 static void R_Reflex_TriggerFlash_RTX(void)
 {
-	SLReflex_Marker_TriggerFlash(reflex_frame_id);
+	SLReflex_Marker_TriggerFlash();
 }
 
 void R_RegisterFunctionsRTX()
