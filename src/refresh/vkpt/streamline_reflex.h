@@ -132,7 +132,6 @@ qboolean SLReflex_PostInit(VkInstance instance, VkPhysicalDevice physicalDevice,
 
 void     SLReflex_Shutdown(void);
 
-void     SLReflex_BeginFrame(void);
 void     SLReflex_Sleep(void);
 void     SLReflex_SetMode(ReflexMode mode, uint32_t frameLimitUs);
 

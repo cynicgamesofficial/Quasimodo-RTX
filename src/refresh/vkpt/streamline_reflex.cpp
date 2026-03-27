@@ -536,20 +536,6 @@ extern "C" void SLReflex_Shutdown(void)
     Com_Printf("Streamline Reflex shut down.\n");
 }
 
-extern "C" void SLReflex_BeginFrame(void)
-{
-    if (!sl_reflex.initialized)
-        return;
-
-    uint32_t idx = (uint32_t)(sl_reflex.frameCounter & 0xFFFFFFFF);
-    sl::Result res = p_slGetNewFrameToken(s_frame_token, &idx);
-    if (res != sl::Result::eOk)
-        return;
-
-    reflex_frame_id = sl_reflex.frameCounter;
-    sl_reflex.frameCounter++;
-}
-
 extern "C" void SLReflex_Sleep(void)
 {
     if (!sl_reflex.initialized || !p_slReflexSleep)
