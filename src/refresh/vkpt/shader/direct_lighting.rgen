@@ -43,6 +43,53 @@ layout(constant_id = 0) const uint spec_enable_caustics = 0;
 #define RNG_RESTIR_SHADE_DYN_Y  62
 #define RNG_RESTIR_SHADE_DYN_Z  63
 
+/*
+ * Observational debug only: maps packed reservoir fields to linear RGB for HF output.
+ * Does not alter reservoir packing, RIS, temporal pass, or shading estimators.
+ * Sunlight is omitted when active so the view is local-light / reservoir only.
+ */
+vec3
+restir_di_debug_visualize(Reservoir res, int mode)
+{
+	/* Mode 1: W — typical final weights often fall in single digits..low tens; clamp highlights. */
+	const float RESTIR_DEBUG_W_SCALE = 50.0;
+
+	if(mode == 1)
+	{
+		if(res.M == 0u || res.W <= 0.0)
+			return vec3(0.0);
+		float g = clamp(res.W / RESTIR_DEBUG_W_SCALE, 0.0, 1.0);
+		return vec3(g);
+	}
+	if(mode == 2)
+	{
+		if(res.M == 0u)
+			return vec3(0.0);
+		float g = clamp(float(res.M) / float(RESTIR_M_CAP), 0.0, 1.0);
+		return vec3(g);
+	}
+	if(mode == 3)
+	{
+		if(res.M == 0u)
+			return vec3(0.0);
+		if(restir_is_dynamic_light(res.lightData))
+			return vec3(1.0, 0.15, 0.15); /* dynamic = red */
+		return vec3(0.15, 0.35, 1.0);   /* polygon = blue */
+	}
+	if(mode == 4)
+	{
+		if(res.M == 0u || res.targetPdf <= 0.0)
+			return vec3(0.0);
+		/* log2 map; avoids NaN by clamping the argument */
+		const float TPDF_LOG_MIN = -20.0;
+		const float TPDF_LOG_MAX = 10.0;
+		float x = log2(max(res.targetPdf, 1e-20));
+		float g = clamp((x - TPDF_LOG_MIN) / (TPDF_LOG_MAX - TPDF_LOG_MIN), 0.0, 1.0);
+		return vec3(g);
+	}
+	return vec3(0.0);
+}
+
 void
 direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out vec3 o_specular)
 {
@@ -93,6 +140,7 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
     get_reflectivity(primary_base_color.rgb, primary_metallic, primary_albedo, primary_base_reflectivity);
 
 	vec3 direct_diffuse, direct_specular;
+	bool suppress_sun_for_restir_debug = false;
 
 	if(global_ubo.pt_restir_di != 0)
 	{
@@ -101,8 +149,14 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 		direct_specular = vec3(0);
 
 		Reservoir res = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, ipos));
+		int restir_dbg = int(global_ubo.pt_restir_di_debug);
 
-		if(res.M > 0 && res.W > 0.0)
+		if(restir_dbg != 0)
+		{
+			suppress_sun_for_restir_debug = true;
+			direct_diffuse = restir_di_debug_visualize(res, restir_dbg);
+		}
+		else if(res.M > 0 && res.W > 0.0)
 		{
 			vec3  pos_on_light = vec3(0);
 			vec3  light_color  = vec3(0);
@@ -230,7 +284,7 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
     high_freq += direct_diffuse;
     o_specular += direct_specular;
 	
-	if(global_ubo.pt_direct_sun_light != 0)
+	if(global_ubo.pt_direct_sun_light != 0 && !suppress_sun_for_restir_debug)
 	{
 		vec3 direct_sun_diffuse, direct_sun_specular;
 		get_sunlight(
