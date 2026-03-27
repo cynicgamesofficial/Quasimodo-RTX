@@ -114,6 +114,7 @@ main()
 	if(view_depth == 0)
 	{
 		imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(reservoir_empty()));
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(0.0));
 		return;
 	}
 
@@ -149,6 +150,7 @@ main()
 
 	Reservoir r = reservoir_empty();
 	float weightSum = 0.0;
+	vec3    stored_sample_pos = vec3(0.0);
 
 	// ---- Candidate 1: polygon light from cluster CDF ---- //
 	if(global_ubo.pt_direct_polygon_lights > 0)
@@ -200,7 +202,7 @@ main()
 
 				if(ris_weight > 0.0)
 					reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
-						get_rng(RNG_RESTIR_INSERT_0));
+						get_rng(RNG_RESTIR_INSERT_0), pos_on_light, stored_sample_pos);
 			}
 		}
 	}
@@ -239,11 +241,15 @@ main()
 				float ris_weight = target_pdf * float(global_ubo.num_dyn_lights);
 
 				reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
-					get_rng(RNG_RESTIR_INSERT_1));
+					get_rng(RNG_RESTIR_INSERT_1), pos_on_light, stored_sample_pos);
 			}
 		}
 	}
 
 	reservoir_finalize(r, weightSum);
 	imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(r));
+	if(r.M > 0u)
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
+	else
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(0.0));
 }

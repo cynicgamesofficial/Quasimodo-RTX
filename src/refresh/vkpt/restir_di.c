@@ -123,6 +123,8 @@ vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 
 	int current_reservoir = VKPT_IMG_RESTIR_RESERVOIR_A + (qvk.frame_counter & 1);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[current_reservoir]);
+	int current_sample_pos = VKPT_IMG_RESTIR_SAMPLE_POS_A + (qvk.frame_counter & 1);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[current_sample_pos]);
 	END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_INITIAL);
 
 	// ---- Temporal reuse ---- //
@@ -133,6 +135,7 @@ vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 	vkCmdDispatch(cmd_buf, wg_x, wg_y, 1);
 
 	BARRIER_COMPUTE(cmd_buf, qvk.images[current_reservoir]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[current_sample_pos]);
 	END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_TEMPORAL);
 
 	return VK_SUCCESS;

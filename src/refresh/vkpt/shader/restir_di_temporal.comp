@@ -112,7 +112,12 @@ main()
 
 	// Nothing to combine if the initial pass produced an empty reservoir
 	if(current.M == 0)
+	{
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(0.0));
 		return;
+	}
+
+	vec3 stored_sample_pos = imageLoad(IMG_RESTIR_SAMPLE_POS_A, ipos).xyz;
 
 	// Current surface for similarity check
 	float depth_curr  = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
@@ -131,21 +136,32 @@ main()
 	if(ipos_prev.x < 0 || ipos_prev.y < 0 ||
 	   ipos_prev.x >= global_ubo.prev_gpu_slice_width ||
 	   ipos_prev.y >= global_ubo.prev_height)
+	{
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 		return;
+	}
 
 	// Previous reservoir
 	Reservoir prev = reservoir_unpack(texelFetch(TEX_RESTIR_RESERVOIR_B, ipos_prev, 0));
 
 	// Nothing to reuse
 	if(prev.M == 0)
+	{
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 		return;
+	}
+
+	vec3 prev_sample_pos = texelFetch(TEX_RESTIR_SAMPLE_POS_B, ipos_prev, 0).xyz;
 
 	// Surface similarity gate
 	float depth_prev  = texelFetch(TEX_PT_VIEW_DEPTH_B, ipos_prev, 0).x;
 	vec3  normal_prev = decode_normal(texelFetch(TEX_PT_NORMAL_B, ipos_prev, 0).x);
 
 	if(!restir_surface_similar(normal_curr, normal_prev, depth_curr, depth_prev))
+	{
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 		return;
+	}
 
 	// Clamp previous M to bound temporal drift
 	prev.M = min(prev.M, RESTIR_M_CAP);
@@ -177,7 +193,10 @@ main()
 
 	// Previous light invisible from current surface → skip
 	if(targetPdf_b_at_a <= 0.0)
+	{
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 		return;
+	}
 
 	// Reconstruct current reservoir's running weight sum:
 	//   weightSumA = current.targetPdf * current.W * float(current.M)
@@ -187,11 +206,12 @@ main()
 	rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
 	float rng = get_rng(RNG_RESTIR_TEMPORAL_COMBINE);
 
-	// Combine
-	reservoir_combine(current, weightSumA, prev, targetPdf_b_at_a, rng);
+	// Combine (carry whichever sample point wins with the reservoir)
+	reservoir_combine(current, weightSumA, prev, targetPdf_b_at_a, rng, prev_sample_pos, stored_sample_pos);
 
 	// Finalize combined reservoir
 	reservoir_finalize(current, weightSumA);
 
 	imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(current));
+	imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 }

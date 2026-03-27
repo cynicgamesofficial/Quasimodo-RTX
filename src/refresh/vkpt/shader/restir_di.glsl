@@ -116,7 +116,8 @@ reservoir_unpack(uvec4 packed)
  * Returns true if the candidate replaced the stored sample.
  */
 bool
-reservoir_insert(inout Reservoir r, inout float weightSum, uint lightData, float targetPdf, float risWeight, float rng)
+reservoir_insert(inout Reservoir r, inout float weightSum, uint lightData, float targetPdf, float risWeight, float rng,
+	vec3 candidate_sample_pos, inout vec3 stored_sample_pos)
 {
 	weightSum += risWeight;
 	r.M += 1;
@@ -125,6 +126,7 @@ reservoir_insert(inout Reservoir r, inout float weightSum, uint lightData, float
 	{
 		r.lightData = lightData;
 		r.targetPdf = targetPdf;
+		stored_sample_pos = candidate_sample_pos;
 		return true;
 	}
 	return false;
@@ -144,7 +146,8 @@ reservoir_insert(inout Reservoir r, inout float weightSum, uint lightData, float
  * rng must be uniform in [0, 1).
  */
 void
-reservoir_combine(inout Reservoir a, inout float weightSumA, Reservoir b, float targetPdf_b_at_a, float rng)
+reservoir_combine(inout Reservoir a, inout float weightSumA, Reservoir b, float targetPdf_b_at_a, float rng,
+	vec3 prev_sample_pos, inout vec3 stored_sample_pos)
 {
 	float b_weight = targetPdf_b_at_a * b.W * float(b.M);
 
@@ -155,7 +158,9 @@ reservoir_combine(inout Reservoir a, inout float weightSumA, Reservoir b, float 
 	{
 		a.lightData = b.lightData;
 		a.targetPdf = targetPdf_b_at_a;
+		stored_sample_pos = prev_sample_pos;
 	}
+	/* else: keep stored_sample_pos (already equals current-frame sample before combine). */
 }
 
 /*
