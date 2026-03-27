@@ -374,7 +374,6 @@ extern "C" qboolean SLReflex_PreInit(void)
     prefs.engineVersion     = "Q2RTX";
     prefs.renderAPI         = sl::RenderAPI::eVulkan;
     prefs.flags             = sl::PreferenceFlags::eDisableCLStateTracking
-                            | sl::PreferenceFlags::eUseManualHooking
                             | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
 
     const char *app_id_env = getenv("SL_APP_ID");
@@ -406,7 +405,7 @@ extern "C" qboolean SLReflex_PreInit(void)
     }
 
     s_preinit_done = true;
-    Com_Printf("Streamline: slInit completed (manual hooking).\n");
+    Com_Printf("Streamline: slInit completed.\n");
     if (s_num_plugin_paths) {
         Com_Printf("Streamline: configured %u plugin search path(s) for feature loading.\n", s_num_plugin_paths);
     } else {
