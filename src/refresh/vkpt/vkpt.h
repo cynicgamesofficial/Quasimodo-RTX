@@ -480,6 +480,8 @@ void create_orthographic_matrix(mat4_t matrix, float xmin, float xmax,
 	PROFILER_DO(REFLECT_REFRACT_1,          1) \
 	PROFILER_DO(REFLECT_REFRACT_2,          1) \
 	PROFILER_DO(ASVGF_GRADIENT_REPROJECT,   1) \
+	PROFILER_DO(RESTIR_DI_INITIAL,          1) \
+	PROFILER_DO(RESTIR_DI_TEMPORAL,         1) \
 	PROFILER_DO(DIRECT_LIGHTING,            1) \
 	PROFILER_DO(INDIRECT_LIGHTING,          1) \
 	PROFILER_DO(INDIRECT_LIGHTING_0,        2) \

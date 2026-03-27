@@ -25,6 +25,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 extern cvar_t *cvar_profiler_scale;
 extern cvar_t *cvar_pt_reflect_refract;
 extern cvar_t *cvar_flt_fsr_enable;
+extern cvar_t *cvar_pt_restir_di;
 extern cvar_t *cvar_profiler_samples;
 
 // Performance marker debug labels
@@ -314,6 +315,11 @@ draw_profiler(int enable_asvgf)
 	if (enable_asvgf)
 	{
 		PROFILER_DO(PROFILER_ASVGF_GRADIENT_REPROJECT, 1);
+	}
+	if (cvar_pt_restir_di->integer != 0)
+	{
+		PROFILER_DO(PROFILER_RESTIR_DI_INITIAL, 2);
+		PROFILER_DO(PROFILER_RESTIR_DI_TEMPORAL, 2);
 	}
 	PROFILER_DO(PROFILER_DIRECT_LIGHTING, 1);
 	PROFILER_DO(PROFILER_INDIRECT_LIGHTING, 1);

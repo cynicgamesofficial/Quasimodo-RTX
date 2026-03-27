@@ -115,6 +115,7 @@ vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 	uint32_t wg_y = (qvk.extent_render.height + GROUP_SIZE - 1) / GROUP_SIZE;
 
 	// ---- Initial candidate generation ---- //
+	BEGIN_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_INITIAL);
 	vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_restir_di[RESTIR_DI_INITIAL]);
 	vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
 		pipeline_layout_restir_di, 0, LENGTH(desc_sets), desc_sets, 0, 0);
@@ -122,14 +123,17 @@ vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 
 	int current_reservoir = VKPT_IMG_RESTIR_RESERVOIR_A + (qvk.frame_counter & 1);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[current_reservoir]);
+	END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_INITIAL);
 
 	// ---- Temporal reuse ---- //
+	BEGIN_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_TEMPORAL);
 	vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_restir_di[RESTIR_DI_TEMPORAL]);
 	vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
 		pipeline_layout_restir_di, 0, LENGTH(desc_sets), desc_sets, 0, 0);
 	vkCmdDispatch(cmd_buf, wg_x, wg_y, 1);
 
 	BARRIER_COMPUTE(cmd_buf, qvk.images[current_reservoir]);
+	END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_TEMPORAL);
 
 	return VK_SUCCESS;
 }
