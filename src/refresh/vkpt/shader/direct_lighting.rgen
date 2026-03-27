@@ -32,8 +32,16 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define ENABLE_SHADOW_CAUSTICS
 #include "path_tracer_rgen.h"
 #include "projection.glsl"
+#include "restir_di.glsl"
 
 layout(constant_id = 0) const uint spec_enable_caustics = 0;
+
+// RNG streams for ReSTIR shading resample (must not collide with 50-58).
+#define RNG_RESTIR_SHADE_TRI_X  59
+#define RNG_RESTIR_SHADE_TRI_Y  60
+#define RNG_RESTIR_SHADE_DYN_X  61
+#define RNG_RESTIR_SHADE_DYN_Y  62
+#define RNG_RESTIR_SHADE_DYN_Z  63
 
 void
 direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out vec3 o_specular)
@@ -85,27 +93,139 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
     get_reflectivity(primary_base_color.rgb, primary_metallic, primary_albedo, primary_base_reflectivity);
 
 	vec3 direct_diffuse, direct_specular;
-    get_direct_illumination(
-    	position, 
-    	normal, 
-    	geo_normal, 
-    	cluster_idx, 
-    	material_id, 
-    	shadow_cull_mask, 
-    	view_direction.xyz, 
-    	primary_albedo,
-    	primary_base_reflectivity,
-    	primary_specular_factor,
-    	primary_roughness, 
-    	primary_medium, 
-    	spec_enable_caustics != 0, 
-    	direct_specular_weight, 
-    	global_ubo.pt_direct_polygon_lights > 0,
-    	global_ubo.pt_direct_dyn_lights > 0,
-    	is_gradient,
-    	0,
-    	direct_diffuse,
-    	direct_specular);
+
+	if(global_ubo.pt_restir_di != 0)
+	{
+		// ---- ReSTIR DI path: shade the reservoir's selected light ---- //
+		direct_diffuse  = vec3(0);
+		direct_specular = vec3(0);
+
+		Reservoir res = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, ipos));
+
+		if(res.M > 0 && res.W > 0.0)
+		{
+			vec3  pos_on_light = vec3(0);
+			vec3  light_color  = vec3(0);
+			bool  valid_sample = false;
+
+			if(restir_is_dynamic_light(res.lightData))
+			{
+				uint dyn_idx = restir_get_light_index(res.lightData);
+
+				if(dyn_idx < global_ubo.num_dyn_lights)
+				{
+					vec3 light_center = global_ubo.dyn_light_data[dyn_idx].center;
+					light_color       = global_ubo.dyn_light_data[dyn_idx].color;
+					uint light_type   = global_ubo.dyn_light_data[dyn_idx].type & 0xffff;
+					uint light_style  = global_ubo.dyn_light_data[dyn_idx].type >> 16;
+
+					vec3 rng_dyn = vec3(
+						get_rng(RNG_RESTIR_SHADE_DYN_X),
+						get_rng(RNG_RESTIR_SHADE_DYN_Y),
+						get_rng(RNG_RESTIR_SHADE_DYN_Z));
+
+					float irradiance;
+					if(light_type == DYNLIGHT_SPHERE)
+						irradiance = compute_dynlight_sphere(dyn_idx, light_center, position, pos_on_light, rng_dyn);
+					else
+						irradiance = compute_dynlight_spot(dyn_idx, light_style, light_center, position, pos_on_light, rng_dyn);
+
+					irradiance = min(irradiance, 2.0 * M_PI);
+					light_color *= irradiance;
+
+					if(dot(pos_on_light - position, geo_normal) > 0 && luminance(light_color) > 0)
+						valid_sample = true;
+				}
+			}
+			else
+			{
+				uint poly_idx = restir_get_light_index(res.lightData);
+
+				if(poly_idx < MAX_LIGHT_POLYS)
+				{
+					LightPolygon light = get_light_polygon(poly_idx);
+
+					// Sky polygon lights not supported in Milestone 1.
+					if(light.color.r >= 0.0)
+					{
+						vec3  light_normal;
+						float pdfw;
+						vec2  rng_tri = vec2(
+							get_rng(RNG_RESTIR_SHADE_TRI_X),
+							get_rng(RNG_RESTIR_SHADE_TRI_Y));
+
+						pos_on_light = sample_projected_triangle(position, light.positions, rng_tri, light_normal, pdfw);
+
+						if(pdfw > 0)
+						{
+							vec3  L     = normalize(pos_on_light - position);
+							float LdotNL = max(0.0, -dot(light_normal, L));
+							float spotlight = sqrt(LdotNL);
+							float inv_pdfw = 1.0 / pdfw;
+
+							light_color = light.color * (inv_pdfw * spotlight * light.light_style_scale);
+
+							if(dot(L, geo_normal) > 0 && luminance(abs(light_color)) > 0)
+								valid_sample = true;
+						}
+					}
+				}
+			}
+
+			if(valid_sample)
+			{
+				vec3 L = normalize(pos_on_light - position);
+
+				Ray shadow_ray = get_shadow_ray(position - view_direction.xyz * 0.01, pos_on_light, 0);
+				float vis = trace_shadow_ray(shadow_ray, shadow_cull_mask);
+
+#ifdef ENABLE_SHADOW_CAUSTICS
+				if(spec_enable_caustics != 0)
+					light_color *= trace_caustic_ray(shadow_ray, primary_medium);
+#endif
+
+				vec3 radiance = vis * light_color * res.W;
+
+				vec3 F = vec3(0);
+
+				if(vis > 0 && direct_specular_weight > 0)
+				{
+					vec3 specular_brdf = GGX_times_NdotL(view_direction.xyz, L,
+						normal, primary_roughness, primary_base_reflectivity, 0.0, primary_specular_factor, F);
+					direct_specular = radiance * specular_brdf * direct_specular_weight;
+				}
+
+				float NdotL = max(0.0, dot(normal, L));
+				float diffuse_brdf = NdotL / M_PI;
+				direct_diffuse = radiance * diffuse_brdf * (vec3(1.0) - F);
+			}
+		}
+	}
+	else
+	{
+		// ---- Legacy direct lighting path (unchanged) ---- //
+		get_direct_illumination(
+			position, 
+			normal, 
+			geo_normal, 
+			cluster_idx, 
+			material_id, 
+			shadow_cull_mask, 
+			view_direction.xyz, 
+			primary_albedo,
+			primary_base_reflectivity,
+			primary_specular_factor,
+			primary_roughness, 
+			primary_medium, 
+			spec_enable_caustics != 0, 
+			direct_specular_weight, 
+			global_ubo.pt_direct_polygon_lights > 0,
+			global_ubo.pt_direct_dyn_lights > 0,
+			is_gradient,
+			0,
+			direct_diffuse,
+			direct_specular);
+	}
 
     high_freq += direct_diffuse;
     o_specular += direct_specular;
