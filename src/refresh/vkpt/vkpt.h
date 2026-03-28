@@ -105,6 +105,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	SHADER_MODULE_DO(QVK_MOD_DEBUG_LINE_VERT)                        \
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_INITIAL_COMP)                \
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_TEMPORAL_COMP)               \
+	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_SPATIAL_COMP)                \
 
 #define LIST_RT_RGEN_SHADER_MODULES \
 	SHADER_MODULE_DO(QVK_MOD_PRIMARY_RAYS_RGEN)                      \
@@ -482,6 +483,7 @@ void create_orthographic_matrix(mat4_t matrix, float xmin, float xmax,
 	PROFILER_DO(ASVGF_GRADIENT_REPROJECT,   1) \
 	PROFILER_DO(RESTIR_DI_INITIAL,          1) \
 	PROFILER_DO(RESTIR_DI_TEMPORAL,         1) \
+	PROFILER_DO(RESTIR_DI_SPATIAL,          1) \
 	PROFILER_DO(DIRECT_LIGHTING,            1) \
 	PROFILER_DO(INDIRECT_LIGHTING,          1) \
 	PROFILER_DO(INDIRECT_LIGHTING_0,        2) \

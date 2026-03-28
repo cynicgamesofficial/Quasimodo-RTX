@@ -143,7 +143,20 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 		direct_diffuse  = vec3(0);
 		direct_specular = vec3(0);
 
-		Reservoir res = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, ipos));
+		Reservoir res;
+		vec3 pos_on_light;
+
+		if(global_ubo.pt_restir_di_spatial != 0)
+		{
+			res = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_B, ipos));
+			pos_on_light = imageLoad(IMG_RESTIR_SAMPLE_POS_B, ipos).xyz;
+		}
+		else
+		{
+			res = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, ipos));
+			pos_on_light = imageLoad(IMG_RESTIR_SAMPLE_POS_A, ipos).xyz;
+		}
+
 		int restir_dbg = int(global_ubo.pt_restir_di_debug);
 
 		if(restir_dbg != 0)
@@ -153,7 +166,6 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 		}
 		else if(res.M > 0 && res.W > 0.0)
 		{
-			vec3  pos_on_light = imageLoad(IMG_RESTIR_SAMPLE_POS_A, ipos).xyz;
 			vec3  light_color  = vec3(0);
 			bool  valid_sample = false;
 

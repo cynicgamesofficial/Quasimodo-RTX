@@ -18,9 +18,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "vkpt.h"
 
+extern cvar_t *cvar_pt_restir_di_spatial;
+
 enum {
 	RESTIR_DI_INITIAL,
 	RESTIR_DI_TEMPORAL,
+	RESTIR_DI_SPATIAL,
 	RESTIR_DI_NUM_PIPELINES
 };
 
@@ -66,6 +69,11 @@ vkpt_restir_di_create_pipelines(void)
 		[RESTIR_DI_TEMPORAL] = {
 			.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 			.stage  = SHADER_STAGE(QVK_MOD_RESTIR_DI_TEMPORAL_COMP, VK_SHADER_STAGE_COMPUTE_BIT),
+			.layout = pipeline_layout_restir_di,
+		},
+		[RESTIR_DI_SPATIAL] = {
+			.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			.stage  = SHADER_STAGE(QVK_MOD_RESTIR_DI_SPATIAL_COMP, VK_SHADER_STAGE_COMPUTE_BIT),
 			.layout = pipeline_layout_restir_di,
 		},
 	};
@@ -137,6 +145,22 @@ vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 	BARRIER_COMPUTE(cmd_buf, qvk.images[current_reservoir]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[current_sample_pos]);
 	END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_TEMPORAL);
+
+	// ---- Spatial reuse ---- //
+	if(cvar_pt_restir_di_spatial && cvar_pt_restir_di_spatial->integer)
+	{
+		BEGIN_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_SPATIAL);
+		vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_restir_di[RESTIR_DI_SPATIAL]);
+		vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
+			pipeline_layout_restir_di, 0, LENGTH(desc_sets), desc_sets, 0, 0);
+		vkCmdDispatch(cmd_buf, wg_x, wg_y, 1);
+
+		int other_reservoir  = VKPT_IMG_RESTIR_RESERVOIR_A  + ((qvk.frame_counter + 1) & 1);
+		int other_sample_pos = VKPT_IMG_RESTIR_SAMPLE_POS_A + ((qvk.frame_counter + 1) & 1);
+		BARRIER_COMPUTE(cmd_buf, qvk.images[other_reservoir]);
+		BARRIER_COMPUTE(cmd_buf, qvk.images[other_sample_pos]);
+		END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_SPATIAL);
+	}
 
 	return VK_SUCCESS;
 }

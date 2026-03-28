@@ -1,0 +1,205 @@
+/*
+Copyright (C) 2026 Quasimodo-RTX contributors.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// ========================================================================== //
+// ReSTIR DI - Spatial reuse.
+//
+// For each pixel: load the post-temporal reservoir from RESERVOIR_A, gather
+// up to N nearby neighbors (also from RESERVOIR_A), apply surface similarity
+// rejection, re-evaluate the neighbor's light at the current surface, and
+// combine via RIS.  The result is written to RESERVOIR_B (safe: temporal
+// already consumed B, so no read-write hazard).
+//
+// direct_lighting.rgen reads from B when spatial reuse is active.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#include "utils.glsl"
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 2
+#define VERTEX_READONLY 1
+#include "vertex_buffer.h"
+
+#include "brdf.glsl"
+
+// ---- Replicated from path_tracer_rgen.h (cannot include in compute) ---- //
+
+#define RNG_SEED_SHIFT_X       0u
+#define RNG_SEED_SHIFT_Y       8u
+#define RNG_SEED_SHIFT_ISODD  16u
+#define RNG_SEED_SHIFT_FRAME  17u
+
+uint rng_seed;
+
+float
+get_rng(uint idx)
+{
+	uvec3 p = uvec3(rng_seed >> RNG_SEED_SHIFT_X, rng_seed >> RNG_SEED_SHIFT_Y, rng_seed >> RNG_SEED_SHIFT_ISODD);
+	p.z = (p.z >> 1) + (p.z & 1);
+	p.z = (p.z + idx);
+	p &= uvec3(BLUE_NOISE_RES - 1, BLUE_NOISE_RES - 1, NUM_BLUE_NOISE_TEX - 1);
+	return min(texelFetch(TEX_BLUE_NOISE, ivec3(p), 0).r, 0.9999999999999);
+}
+
+vec3
+env_map(vec3 direction, bool remove_sun)
+{
+	direction = (global_ubo.environment_rotation_matrix * vec4(direction, 0)).xyz;
+	vec3 envmap = vec3(0);
+	if(global_ubo.environment_type == ENVIRONMENT_DYNAMIC)
+	{
+		envmap = textureLod(TEX_PHYSICAL_SKY, direction.xzy, 0).rgb;
+		if(remove_sun)
+			envmap = min(envmap, vec3((1 - dot(direction, global_ubo.sun_direction_envmap)) * 200));
+	}
+	else if(global_ubo.environment_type == ENVIRONMENT_STATIC)
+	{
+		envmap = textureLod(TEX_ENVMAP, direction.xzy, 0).rgb;
+		float avg = (envmap.x + envmap.y + envmap.z) / 3.0;
+		envmap = mix(envmap, avg.xxx, global_ubo.pt_envmap_desaturate) * global_ubo.pt_envmap_brightness;
+	}
+	return envmap;
+}
+
+// ---- End replicated block ---- //
+
+#include "light_lists.h"
+#include "restir_di.glsl"
+
+#define RESTIR_SPATIAL_NEIGHBOR_COUNT 5
+#define RESTIR_SPATIAL_M_CAP         30
+
+#define RNG_SPATIAL_ROTATION   50
+#define RNG_SPATIAL_COMBINE_0  51
+
+// Fixed neighbor offsets (~radius 6), rotated per-pixel by blue noise.
+const vec2 spatial_base_offsets[RESTIR_SPATIAL_NEIGHBOR_COUNT] = vec2[RESTIR_SPATIAL_NEIGHBOR_COUNT](
+	vec2( 6.0,  1.0),
+	vec2(-2.0,  6.0),
+	vec2(-5.0, -4.0),
+	vec2( 4.0, -5.0),
+	vec2(-7.0,  3.0)
+);
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+
+	if(ipos.x >= global_ubo.current_gpu_slice_width || ipos.y >= global_ubo.height)
+		return;
+
+	Reservoir current = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, ipos));
+
+	if(current.M == 0)
+	{
+		imageStore(IMG_RESTIR_RESERVOIR_B, ipos, reservoir_pack(reservoir_empty()));
+		imageStore(IMG_RESTIR_SAMPLE_POS_B, ipos, vec4(0.0));
+		return;
+	}
+
+	vec3  stored_sample_pos = imageLoad(IMG_RESTIR_SAMPLE_POS_A, ipos).xyz;
+	float depth_curr  = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	vec3  normal_curr = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+
+	// Full surface data for target re-evaluation
+	vec3  position   = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0).xyz;
+	vec3  geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+	vec3  view_dir   = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
+
+	vec4  base_color  = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+	vec2  metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
+	float roughness   = metal_rough.y;
+	float alpha       = roughness * roughness;
+	float phong_exp   = RoughnessSquareToSpecPower(alpha);
+	float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
+	float specular_factor = base_color.a;
+	float metallic    = metal_rough.x;
+	vec3  albedo, base_reflectivity;
+	get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
+	float phong_weight = clamp(
+		specular_factor * luminance(base_reflectivity) /
+		max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
+		0.0, 0.9);
+
+	rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
+
+	float weightSum = current.targetPdf * current.W * float(current.M);
+
+	// Per-pixel rotation angle from blue noise
+	float angle = get_rng(RNG_SPATIAL_ROTATION) * 2.0 * M_PI;
+	float ca = cos(angle), sa = sin(angle);
+
+	for(int n = 0; n < RESTIR_SPATIAL_NEIGHBOR_COUNT; n++)
+	{
+		vec2 base = spatial_base_offsets[n];
+		vec2 rotated = vec2(ca * base.x - sa * base.y, sa * base.x + ca * base.y);
+		ivec2 npos = ipos + ivec2(round(rotated));
+
+		if(npos.x < 0 || npos.y < 0 ||
+		   npos.x >= global_ubo.current_gpu_slice_width ||
+		   npos.y >= global_ubo.height)
+			continue;
+
+		Reservoir neighbor = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, npos));
+		if(neighbor.M == 0)
+			continue;
+
+		// Surface similarity (slightly tighter depth threshold than temporal)
+		float depth_n  = texelFetch(TEX_PT_VIEW_DEPTH_A, npos, 0).x;
+		vec3  normal_n = decode_normal(texelFetch(TEX_PT_NORMAL_A, npos, 0).x);
+
+		if(dot(normal_curr, normal_n) < 0.95)
+			continue;
+		float depth_ratio = max(depth_curr, depth_n) / max(min(depth_curr, depth_n), 1e-6);
+		if(depth_ratio > 1.05)
+			continue;
+
+		neighbor.M = min(neighbor.M, RESTIR_M_CAP);
+
+		float targetPdf_n = evaluate_restir_target(neighbor.lightData,
+			position, normal_curr, geo_normal, view_dir,
+			phong_exp, phong_scale, phong_weight);
+
+		if(targetPdf_n <= 0.0)
+			continue;
+
+		vec3 neighbor_sample_pos = imageLoad(IMG_RESTIR_SAMPLE_POS_A, npos).xyz;
+
+		float rng = get_rng(uint(RNG_SPATIAL_COMBINE_0 + n));
+		reservoir_combine(current, weightSum, neighbor, targetPdf_n, rng,
+			neighbor_sample_pos, stored_sample_pos);
+	}
+
+	current.M = min(current.M, RESTIR_SPATIAL_M_CAP);
+	reservoir_finalize(current, weightSum);
+
+	imageStore(IMG_RESTIR_RESERVOIR_B, ipos, reservoir_pack(current));
+	imageStore(IMG_RESTIR_SAMPLE_POS_B, ipos, vec4(stored_sample_pos, 1.0));
+}

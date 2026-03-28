@@ -327,6 +327,7 @@ set(SRC_SHADERS
 	refresh/vkpt/shader/normalize_normal_map.comp
 	refresh/vkpt/shader/restir_di_initial.comp
 	refresh/vkpt/shader/restir_di_temporal.comp
+	refresh/vkpt/shader/restir_di_spatial.comp
 	refresh/vkpt/shader/tone_mapping_histogram.comp
 	refresh/vkpt/shader/tone_mapping_curve.comp
     refresh/vkpt/shader/tone_mapping_apply.comp
