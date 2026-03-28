@@ -149,7 +149,7 @@ begin video
 		range "texture LOD bias" pt_texture_lod_bias -2 2 0.5
         pairs "anti-aliasing" flt_taa "none" 0 "temporal AA" 1 "temporal upscaling" 2
         pairs "global illumination" pt_num_bounce_rays low 0.5 medium 1 high 2
-        pairs "ReSTIR direct lighting (DI)" pt_restir_di "Legacy" 0 "ReSTIR" 1
+        pairs "ReSTIR direct lighting (DI)" pt_restir_di "legacy" 0 "ReSTIR" 1
         pairs "ReSTIR DI debug view" pt_restir_di_debug "Off" 0 "W" 1 "M" 2 "Light type" 3 "Target PDF" 4
         pairs "reflection/refraction depth" pt_reflect_refract off 0 1 1 2 2 4 4 8 8
 		toggle --status "turn some monitors in the game into security camera views" \

@@ -65,6 +65,8 @@ restir_di_debug_visualize(Reservoir res, int mode)
 	{
 		if(res.M == 0u)
 			return vec3(0.0);
+		if(restir_is_sun_light(res.lightData))
+			return vec3(0.15, 1.0, 0.15); /* sun = green */
 		if(restir_is_dynamic_light(res.lightData))
 			return vec3(1.0, 0.15, 0.15); /* dynamic = red */
 		return vec3(0.15, 0.35, 1.0);   /* polygon = blue */
@@ -155,7 +157,22 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 			vec3  light_color  = vec3(0);
 			bool  valid_sample = false;
 
-			if(restir_is_dynamic_light(res.lightData))
+			if(restir_is_sun_light(res.lightData))
+			{
+				if(global_ubo.sun_visible != 0)
+				{
+					vec3 L = normalize(pos_on_light - position);
+					float NdotL  = dot(L, normal);
+					float GNdotL = dot(L, geo_normal);
+
+					if(NdotL > 0.0 && GNdotL > 0.0)
+					{
+						light_color  = sun_color_ubo.sun_color;
+						valid_sample = true;
+					}
+				}
+			}
+			else if(restir_is_dynamic_light(res.lightData))
 			{
 				uint dyn_idx = restir_get_light_index(res.lightData);
 
@@ -241,19 +258,27 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 				{
 					LightPolygon light = get_light_polygon(poly_idx);
 
+					// Sky polygon lights not supported in Milestone 1.
 					if(light.color.r >= 0.0)
 					{
-						vec3 light_normal = normalize(cross(
-							light.positions[1] - light.positions[0],
-							light.positions[2] - light.positions[0]));
-						vec3 L = normalize(pos_on_light - position);
-						float LdotNL = max(0.0, -dot(light_normal, L));
-						float spotlight = sqrt(LdotNL);
+						mat3 projected = project_triangle(light.positions, position);
+						float pdfw = get_spherical_triangle_pdfw(projected);
 
-						light_color = light.color * (spotlight * light.light_style_scale);
+						if(pdfw > 0.0)
+						{
+							vec3 light_normal = normalize(cross(
+								light.positions[1] - light.positions[0],
+								light.positions[2] - light.positions[0]));
+							vec3 L = normalize(pos_on_light - position);
+							float LdotNL = max(0.0, -dot(light_normal, L));
+							float spotlight = sqrt(LdotNL);
+							float inv_pdfw = 1.0 / pdfw;
 
-						if(dot(L, geo_normal) > 0 && luminance(abs(light_color)) > 0)
-							valid_sample = true;
+							light_color = light.color * (inv_pdfw * spotlight * light.light_style_scale);
+
+							if(dot(L, geo_normal) > 0 && luminance(abs(light_color)) > 0)
+								valid_sample = true;
+						}
 					}
 				}
 			}
@@ -316,7 +341,8 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
     high_freq += direct_diffuse;
     o_specular += direct_specular;
 	
-	if(global_ubo.pt_direct_sun_light != 0 && !suppress_sun_for_restir_debug)
+	bool suppress_legacy_sun = suppress_sun_for_restir_debug || (global_ubo.pt_restir_di != 0);
+	if(global_ubo.pt_direct_sun_light != 0 && !suppress_legacy_sun)
 	{
 		vec3 direct_sun_diffuse, direct_sun_specular;
 		get_sunlight(

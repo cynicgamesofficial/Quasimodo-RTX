@@ -151,15 +151,6 @@ main()
 		return;
 	}
 
-	// Transient dynamic lights (muzzle flash, projectiles, impacts) vanish
-	// within a few frames.  Reusing their reservoir causes stale W spikes
-	// that manifest as white firefly dots.  Reject them unconditionally.
-	if(restir_is_dynamic_light(prev.lightData))
-	{
-		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
-		return;
-	}
-
 	vec3 prev_sample_pos = texelFetch(TEX_RESTIR_SAMPLE_POS_B, ipos_prev, 0).xyz;
 
 	// Surface similarity gate
@@ -207,17 +198,6 @@ main()
 		return;
 	}
 
-	// Reject if re-evaluated target differs wildly from current candidate.
-	// A large ratio means the previous light dominates unreasonably at this
-	// surface; a tiny ratio means it contributes negligibly but may still
-	// win the RIS coin-flip and inject a stale W spike.
-	float ratio = targetPdf_b_at_a / max(current.targetPdf, 1e-6);
-	if(ratio > 10.0 || ratio < 0.1)
-	{
-		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
-		return;
-	}
-
 	// Reconstruct current reservoir's running weight sum:
 	//   weightSumA = current.targetPdf * current.W * float(current.M)
 	float weightSumA = current.targetPdf * current.W * float(current.M);
@@ -231,10 +211,6 @@ main()
 
 	// Finalize combined reservoir
 	reservoir_finalize(current, weightSumA);
-
-	// Numerical safety: cap W to prevent single-pixel energy spikes.
-	// 50.0 is consistent with the debug-view scale (Patch 4).
-	current.W = min(current.W, 50.0);
 
 	imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(current));
 	imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));

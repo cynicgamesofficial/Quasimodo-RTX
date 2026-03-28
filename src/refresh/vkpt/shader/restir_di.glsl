@@ -27,11 +27,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
  *   .x = lightData
  *        bits [12:0]  = light index (0..4095 polygon, 4096..4127 dynamic)
  *        bit  [13]    = 1 if dynamic light, 0 if polygon light
- *        bits [31:14] = reserved (zero)
+ *        bit  [14]    = 1 if sun (no index; bits [12:0] and [13] ignored)
+ *        bits [31:15] = reserved (zero)
  *
  *        Polygon lights:  index is the polygon light index into LightBuffer.light_polys[].
  *        Dynamic lights:  index is the dynamic light index into global_ubo.dyn_light_data[].
- *        Encoding: lightData = isDynamic ? ((1u << 13) | dynIdx) : polyIdx
+ *        Sun:             no index needed — there is exactly one sun.
+ *        Encoding: lightData = isDynamic ? ((1u << 13) | dynIdx) : isSun ? (1u << 14) : polyIdx
  *
  *   .y = floatBitsToUint(targetPdf)
  *        The pure target function p-hat evaluated at the selected sample.
@@ -53,6 +55,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
  *   - The source PDF for a polygon light = the light selection PDF from sample_polygonal_lights()
  *     i.e. (cluster CDF weight) / (sum of cluster CDF weights) * geometric solid-angle PDF.
  *   - The source PDF for a dynamic light = 1 / num_dyn_lights (uniform random selection).
+ *   - The source PDF for the sun = 1 (exactly one sun; always attempted).
  *   - The target PDF is always re-evaluated at the shading point since it depends on the
  *     surface BRDF, normal, and distance to the light sample point.
  *   - During temporal reuse, the previous reservoir's target PDF is re-evaluated at the
@@ -61,6 +64,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #define RESTIR_M_CAP 20
 #define RESTIR_LIGHT_FLAG_DYNAMIC (1u << 13)
+#define RESTIR_LIGHT_FLAG_SUN     (1u << 14)
 
 struct Reservoir
 {
@@ -211,9 +215,21 @@ restir_encode_dynamic_light(uint dyn_index)
 }
 
 bool
+restir_is_sun_light(uint lightData)
+{
+	return (lightData & RESTIR_LIGHT_FLAG_SUN) != 0;
+}
+
+bool
 restir_is_dynamic_light(uint lightData)
 {
-	return (lightData & RESTIR_LIGHT_FLAG_DYNAMIC) != 0;
+	return !restir_is_sun_light(lightData) && (lightData & RESTIR_LIGHT_FLAG_DYNAMIC) != 0;
+}
+
+uint
+restir_encode_sun()
+{
+	return RESTIR_LIGHT_FLAG_SUN;
 }
 
 uint
@@ -230,6 +246,7 @@ restir_get_light_index(uint lightData)
  *
  * Polygon lights:  spherical_tri_area * luminance(|emission|) * style
  * Dynamic lights:  sphere-irradiance  * luminance(color)      * NdotL
+ * Sun:             luminance(sun_color) * NdotL
  *
  * Returns 0 if the light is invisible from the surface.
  */
@@ -238,6 +255,20 @@ evaluate_restir_target(uint lightData,
 	vec3 position, vec3 normal, vec3 geo_normal, vec3 view_dir,
 	float phong_exp, float phong_scale, float phong_weight)
 {
+	if(restir_is_sun_light(lightData))
+	{
+		if(global_ubo.sun_visible == 0)
+			return 0.0;
+
+		float NdotL  = max(0.0, dot(normal, global_ubo.sun_direction));
+		float GNdotL = dot(geo_normal, global_ubo.sun_direction);
+
+		if(NdotL <= 0.0 || GNdotL <= 0.0)
+			return 0.0;
+
+		return luminance(sun_color_ubo.sun_color) * NdotL;
+	}
+
 	if(restir_is_dynamic_light(lightData))
 	{
 		uint dyn_idx = restir_get_light_index(lightData);
