@@ -278,11 +278,12 @@ main()
 
 				if(target_pdf > 0.0)
 				{
-					float ris_weight = target_pdf;
-					vec3 pos_on_light = position + sun_dir * 10000.0;
+				float ris_weight = target_pdf;
+				vec3 pos_on_light = position + sun_dir * 10000.0;
+				stored_sample_pos = pos_on_light;
 
-					reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
-						get_rng(RNG_RESTIR_INSERT_SUN), pos_on_light, stored_sample_pos);
+				reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
+					get_rng(RNG_RESTIR_INSERT_SUN), pos_on_light, stored_sample_pos);
 				}
 			}
 		}
