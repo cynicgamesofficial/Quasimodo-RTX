@@ -169,48 +169,48 @@ main()
 	// Clamp previous M to bound temporal drift
 	prev.M = min(prev.M, RESTIR_M_CAP);
 
-	// ---- Full surface data for target re-evaluation ---- //
-	vec3  position   = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0).xyz;
-	vec3  geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
-	vec3  view_dir   = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
-
-	vec4  base_color  = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
-	vec2  metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
-	float roughness   = metal_rough.y;
-	float alpha       = roughness * roughness;
-	float phong_exp   = RoughnessSquareToSpecPower(alpha);
-	float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
-	float specular_factor = base_color.a;
-	float metallic    = metal_rough.x;
-	vec3  albedo, base_reflectivity;
-	get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
-	float phong_weight = clamp(
-		specular_factor * luminance(base_reflectivity) /
-		max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
-		0.0, 0.9);
-
-	// Re-evaluate previous light at current surface using the reprojected sample position.
-	float targetPdf_b_at_a = evaluate_restir_target_sampled(prev.lightData, prev_sample_pos,
-		position, normal_curr, geo_normal, view_dir,
-		phong_exp, phong_scale, phong_weight);
-
-	// Previous light invisible from current surface → skip
-	if(targetPdf_b_at_a <= 0.0)
-	{
-		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
-		return;
-	}
-
 	// Reconstruct current reservoir's running weight sum:
 	//   weightSumA = current.targetPdf * current.W * float(current.M)
 	float weightSumA = current.targetPdf * current.W * float(current.M);
 
-	// RNG for the combine coin-flip
-	rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
-	float rng = get_rng(RNG_RESTIR_TEMPORAL_COMBINE);
+	bool prev_identity_valid = restir_validate_light_sample_identity(prev.lightData, prev_sample_pos);
+	if(prev_identity_valid)
+	{
+		// ---- Full surface data for target re-evaluation ---- //
+		vec3  position   = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0).xyz;
+		vec3  geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+		vec3  view_dir   = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
 
-	// Combine (carry whichever sample point wins with the reservoir)
-	reservoir_combine(current, weightSumA, prev, targetPdf_b_at_a, rng, prev_sample_pos, stored_sample_pos);
+		vec4  base_color  = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+		vec2  metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
+		float roughness   = metal_rough.y;
+		float alpha       = roughness * roughness;
+		float phong_exp   = RoughnessSquareToSpecPower(alpha);
+		float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
+		float specular_factor = base_color.a;
+		float metallic    = metal_rough.x;
+		vec3  albedo, base_reflectivity;
+		get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
+		float phong_weight = clamp(
+			specular_factor * luminance(base_reflectivity) /
+			max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
+			0.0, 0.9);
+
+		// Re-evaluate previous light at current surface using the reprojected sample position.
+		float targetPdf_b_at_a = evaluate_restir_target_sampled(prev.lightData, prev_sample_pos,
+			position, normal_curr, geo_normal, view_dir,
+			phong_exp, phong_scale, phong_weight);
+
+		if(targetPdf_b_at_a > 0.0)
+		{
+			// RNG for the combine coin-flip
+			rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
+			float rng = get_rng(RNG_RESTIR_TEMPORAL_COMBINE);
+
+			// Combine (carry whichever sample point wins with the reservoir)
+			reservoir_combine(current, weightSumA, prev, targetPdf_b_at_a, rng, prev_sample_pos, stored_sample_pos);
+		}
+	}
 
 	// Finalize combined reservoir
 	reservoir_finalize(current, weightSumA);

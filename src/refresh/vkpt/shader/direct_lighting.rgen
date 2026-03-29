@@ -202,7 +202,11 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 			vec3  light_color  = vec3(0);
 			bool  valid_sample = false;
 
-			if(restir_is_sun_light(res.lightData))
+			if(!restir_validate_light_sample_identity(res.lightData, pos_on_light))
+			{
+				valid_sample = false;
+			}
+			else if(restir_is_sun_light(res.lightData))
 			{
 				if(global_ubo.sun_visible != 0)
 				{

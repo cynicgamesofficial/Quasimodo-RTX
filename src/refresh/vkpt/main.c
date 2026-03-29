@@ -553,7 +553,9 @@ static void restir_di_detect_light_topology_resets(const refdef_t *fd, int num_m
 
 	const uint64_t dynlight_hash = restir_di_hash_dynamic_lights(fd->dlights, fd->num_dlights);
 	if (restir_di_history.dynlight_hash_valid && dynlight_hash != restir_di_history.dynlight_topology_hash)
+	{
 		restir_di_request_reset(RESTIR_DI_RESET_DLIGHT_TOPOLOGY_CHANGE);
+	}
 	restir_di_history.dynlight_topology_hash = dynlight_hash;
 	restir_di_history.dynlight_hash_valid = true;
 
@@ -2399,6 +2401,8 @@ add_dlights(const dlight_t* lights, int num_lights, QVKUniformBuffer_t* ubo)
 	for (int i = 0; i < num_lights; i++)
 	{
 		const dlight_t* light = lights + i;
+		if (light->radius <= 0.f || light->intensity <= 0.f)
+			continue;
 
 		DynLightData* dynlight_data = ubo->dyn_light_data + ubo->num_dyn_lights;
 		VectorCopy(light->origin, dynlight_data->center);

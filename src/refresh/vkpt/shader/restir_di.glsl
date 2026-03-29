@@ -238,6 +238,160 @@ restir_get_light_index(uint lightData)
 	return lightData & 0x1FFFu; // lower 13 bits
 }
 
+bool
+restir_is_finite_float(float v)
+{
+	return !isnan(v) && !isinf(v);
+}
+
+bool
+restir_is_finite_vec3(vec3 v)
+{
+	return !any(isnan(v)) && !any(isinf(v));
+}
+
+bool
+restir_validate_dynamic_sample_identity(uint dyn_idx, vec3 sample_pos)
+{
+	if(dyn_idx >= global_ubo.num_dyn_lights)
+		return false;
+
+	if(!restir_is_finite_vec3(sample_pos))
+		return false;
+
+	vec3 center = global_ubo.dyn_light_data[dyn_idx].center;
+	vec3 color = global_ubo.dyn_light_data[dyn_idx].color;
+	float radius = global_ubo.dyn_light_data[dyn_idx].radius;
+	uint light_type = global_ubo.dyn_light_data[dyn_idx].type & 0xffffu;
+	uint light_style = global_ubo.dyn_light_data[dyn_idx].type >> 16;
+
+	if(!restir_is_finite_vec3(center) || !restir_is_finite_vec3(color))
+		return false;
+	if(!restir_is_finite_float(radius) || radius <= 0.0)
+		return false;
+
+	if(light_type == DYNLIGHT_SPHERE)
+	{
+		float dist = length(sample_pos - center);
+		if(!restir_is_finite_float(dist))
+			return false;
+
+		float sphere_tol = max(1e-3, 0.05 * radius);
+		return abs(dist - radius) <= sphere_tol;
+	}
+	else if(light_type == DYNLIGHT_SPOT)
+	{
+		if(light_style != DYNLIGHT_SPOT_EMISSION_PROFILE_FALLOFF &&
+		   light_style != DYNLIGHT_SPOT_EMISSION_PROFILE_AXIS_ANGLE_TEXTURE)
+			return false;
+
+		vec3 axis = global_ubo.dyn_light_data[dyn_idx].spot_direction;
+		if(!restir_is_finite_vec3(axis))
+			return false;
+
+		float axis_len = length(axis);
+		if(!restir_is_finite_float(axis_len) || axis_len <= 1e-4)
+			return false;
+		axis /= axis_len;
+
+		vec3 rel = sample_pos - center;
+		if(!restir_is_finite_vec3(rel))
+			return false;
+
+		float axial = dot(rel, axis);
+		vec3 radial = rel - axis * axial;
+		float axial_tol = max(1e-3, 0.01 * radius);
+		if(abs(axial) > axial_tol)
+			return false;
+
+		float radial2 = dot(radial, radial);
+		float radial_limit = radius * 1.05;
+		if(radial2 > radial_limit * radial_limit)
+			return false;
+
+		return true;
+	}
+
+	return false;
+}
+
+bool
+restir_validate_polygon_sample_identity(uint poly_idx, vec3 sample_pos)
+{
+	if(poly_idx >= MAX_LIGHT_POLYS)
+		return false;
+	if(!restir_is_finite_vec3(sample_pos))
+		return false;
+
+	LightPolygon light = get_light_polygon(poly_idx);
+	if(light.color.r < 0.0)
+		return false;
+	if(!restir_is_finite_vec3(light.color))
+		return false;
+
+	vec3 a = light.positions[0];
+	vec3 b = light.positions[1];
+	vec3 c = light.positions[2];
+	if(!restir_is_finite_vec3(a) || !restir_is_finite_vec3(b) || !restir_is_finite_vec3(c))
+		return false;
+
+	vec3 e0 = b - a;
+	vec3 e1 = c - a;
+	vec3 n = cross(e0, e1);
+	float n_len = length(n);
+	if(!restir_is_finite_float(n_len) || n_len <= 1e-8)
+		return false;
+
+	float edge_ab = length(e0);
+	float edge_bc = length(c - b);
+	float edge_ca = length(e1);
+	if(!restir_is_finite_float(edge_ab) || !restir_is_finite_float(edge_bc) || !restir_is_finite_float(edge_ca))
+		return false;
+	float maxEdgeLen = max(edge_ab, max(edge_bc, edge_ca));
+
+	vec3 n_hat = n / n_len;
+	float plane_dist = abs(dot(n_hat, sample_pos - a));
+	if(plane_dist > max(1e-3, 5e-3 * maxEdgeLen))
+		return false;
+
+	float d00 = dot(e0, e0);
+	float d01 = dot(e0, e1);
+	float d11 = dot(e1, e1);
+	vec3 v2 = sample_pos - a;
+	float d20 = dot(v2, e0);
+	float d21 = dot(v2, e1);
+	float denom = d00 * d11 - d01 * d01;
+	if(!restir_is_finite_float(denom) || abs(denom) <= 1e-12)
+		return false;
+
+	float v = (d11 * d20 - d01 * d21) / denom;
+	float w = (d00 * d21 - d01 * d20) / denom;
+	float u = 1.0 - v - w;
+	if(!restir_is_finite_float(u) || !restir_is_finite_float(v) || !restir_is_finite_float(w))
+		return false;
+
+	const float bary_min = -5e-3;
+	const float bary_max = 1.005;
+	return (u >= bary_min && v >= bary_min && w >= bary_min &&
+		u <= bary_max && v <= bary_max && w <= bary_max);
+}
+
+bool
+restir_validate_light_sample_identity(uint lightData, vec3 sample_pos)
+{
+	if(restir_is_sun_light(lightData))
+		return restir_is_finite_vec3(sample_pos);
+
+	if(restir_is_dynamic_light(lightData))
+	{
+		uint dyn_idx = restir_get_light_index(lightData);
+		return restir_validate_dynamic_sample_identity(dyn_idx, sample_pos);
+	}
+
+	uint poly_idx = restir_get_light_index(lightData);
+	return restir_validate_polygon_sample_identity(poly_idx, sample_pos);
+}
+
 float
 restir_dynlight_spot_falloff(uint dyn_idx, uint light_style, vec3 Ldir)
 {
