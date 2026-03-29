@@ -179,8 +179,8 @@ main()
 		{
 			uint lightData = restir_encode_polygon_light(uint(poly_light_index));
 
-			// Pure target function -- same definition used by temporal re-evaluation.
-			float target_pdf = evaluate_restir_target(lightData,
+			// Pure target function -- sampled variant for dynamic spotlight consistency.
+			float target_pdf = evaluate_restir_target_sampled(lightData, pos_on_light,
 				position, normal, geo_normal, view_dir,
 				phong_exp, phong_scale, phong_weight);
 
@@ -234,7 +234,7 @@ main()
 			uint lightData = restir_encode_dynamic_light(dyn_idx);
 
 			// Pure target function -- same definition used by temporal re-evaluation.
-			float target_pdf = evaluate_restir_target(lightData,
+			float target_pdf = evaluate_restir_target_sampled(lightData, pos_on_light,
 				position, normal, geo_normal, view_dir,
 				phong_exp, phong_scale, phong_weight);
 

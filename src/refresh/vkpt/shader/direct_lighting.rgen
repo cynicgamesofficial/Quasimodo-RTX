@@ -36,6 +36,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 layout(constant_id = 0) const uint spec_enable_caustics = 0;
 
+#define RESTIR_DI_DEBUG_MODE_WEIGHT 1
+#define RESTIR_DI_DEBUG_MODE_M 2
+#define RESTIR_DI_DEBUG_MODE_LIGHT_TYPE 3
+#define RESTIR_DI_DEBUG_MODE_TARGET_PDF 4
+#define RESTIR_DI_DEBUG_MODE_TEMPORAL_VS_SPATIAL 5
+#define RESTIR_DI_DEBUG_MODE_TEMPORAL_LIFECYCLE 6
+
 /*
  * Observational debug only: maps packed reservoir fields to linear RGB for HF output.
  * Does not alter reservoir packing, RIS, temporal pass, or shading estimators.
@@ -47,21 +54,21 @@ restir_di_debug_visualize(Reservoir res, int mode)
 	/* Mode 1: W — typical final weights often fall in single digits..low tens; clamp highlights. */
 	const float RESTIR_DEBUG_W_SCALE = 50.0;
 
-	if(mode == 1)
+	if(mode == RESTIR_DI_DEBUG_MODE_WEIGHT)
 	{
 		if(res.M == 0u || res.W <= 0.0)
 			return vec3(0.0);
 		float g = clamp(res.W / RESTIR_DEBUG_W_SCALE, 0.0, 1.0);
 		return vec3(g);
 	}
-	if(mode == 2)
+	if(mode == RESTIR_DI_DEBUG_MODE_M)
 	{
 		if(res.M == 0u)
 			return vec3(0.0);
 		float g = clamp(float(res.M) / float(RESTIR_M_CAP), 0.0, 1.0);
 		return vec3(g);
 	}
-	if(mode == 3)
+	if(mode == RESTIR_DI_DEBUG_MODE_LIGHT_TYPE)
 	{
 		if(res.M == 0u)
 			return vec3(0.0);
@@ -71,7 +78,7 @@ restir_di_debug_visualize(Reservoir res, int mode)
 			return vec3(1.0, 0.15, 0.15); /* dynamic = red */
 		return vec3(0.15, 0.35, 1.0);   /* polygon = blue */
 	}
-	if(mode == 4)
+	if(mode == RESTIR_DI_DEBUG_MODE_TARGET_PDF)
 	{
 		if(res.M == 0u || res.targetPdf <= 0.0)
 			return vec3(0.0);
@@ -82,7 +89,7 @@ restir_di_debug_visualize(Reservoir res, int mode)
 		float g = clamp((x - TPDF_LOG_MIN) / (TPDF_LOG_MAX - TPDF_LOG_MIN), 0.0, 1.0);
 		return vec3(g);
 	}
-	if(mode == 5)
+	if(mode == RESTIR_DI_DEBUG_MODE_TEMPORAL_VS_SPATIAL)
 	{
 		if(res.M == 0u)
 			return vec3(0.0);
@@ -97,6 +104,16 @@ restir_di_debug_visualize(Reservoir res, int mode)
 		}
 		float t = float(res.M - M_TEMPORAL_MAX) / float(M_SPATIAL_MAX - M_TEMPORAL_MAX);
 		return vec3(0.0, clamp(t, 0.0, 1.0), 0.0);
+	}
+	if(mode == RESTIR_DI_DEBUG_MODE_TEMPORAL_LIFECYCLE)
+	{
+		if(global_ubo.restir_reset_reason_bits != 0)
+			return vec3(1.0, 0.0, 0.0);
+
+		float history_valid = (global_ubo.restir_history_valid != 0) ? 1.0 : 0.0;
+		float generation_match = (global_ubo.restir_history_generation == global_ubo.restir_current_generation) ? 1.0 : 0.0;
+		float temporal_bypass = (global_ubo.restir_temporal_bypass != 0) ? 1.0 : 0.0;
+		return vec3(history_valid, generation_match, temporal_bypass);
 	}
 	return vec3(0.0);
 }
@@ -224,57 +241,17 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 						if(dot(pos_on_light - position, geo_normal) > 0 && luminance(light_color) > 0)
 							valid_sample = true;
 					}
-					else
+					else if(light_type == DYNLIGHT_SPOT)
 					{
-						vec3 c = pos_on_light - position;
-						float dist = length(c);
-						float rdist = 1.0 / max(dist, 1e-6);
-						vec3 Ldir = c * rdist;
-						mat3 onb = construct_ONB_frisvad(global_ubo.dyn_light_data[dyn_idx].spot_direction);
-						vec3 L_l = -Ldir * onb;
-						float cosTheta = L_l.y;
-						float falloff;
-
-						if(light_style == DYNLIGHT_SPOT_EMISSION_PROFILE_FALLOFF)
-						{
-							const vec2 spot_falloff = unpackHalf2x16(global_ubo.dyn_light_data[dyn_idx].spot_data);
-							const float cosTotalWidth = spot_falloff.x;
-							const float cosFalloffStart = spot_falloff.y;
-
-							if(cosTheta < cosTotalWidth)
-								falloff = 0.0;
-							else if(cosTheta > cosFalloffStart)
-								falloff = 1.0;
-							else
-							{
-								float delta = (cosTheta - cosTotalWidth) / (cosFalloffStart - cosTotalWidth);
-								falloff = (delta * delta) * (delta * delta);
-							}
-						}
-						else if(light_style == DYNLIGHT_SPOT_EMISSION_PROFILE_AXIS_ANGLE_TEXTURE)
-						{
-							const uint spot_data = global_ubo.dyn_light_data[dyn_idx].spot_data;
-							const float theta = acos(cosTheta);
-							const float totalWidth = unpackHalf2x16(spot_data).x;
-							const uint texture_num = spot_data >> 16;
-
-							if(cosTheta >= 0.0)
-							{
-								float tc = clamp(theta / totalWidth, 0.0, 1.0);
-								falloff = global_texture(texture_num, vec2(tc, 0.0)).r;
-							}
-							else
-								falloff = 0.0;
-						}
-						else
-							falloff = 0.0;
-
-						float irradiance = 2.0 * falloff * square(rdist);
-						irradiance = min(irradiance, 2.0 * M_PI);
+						float irradiance = restir_dynlight_spot_irradiance(dyn_idx, light_style, position, pos_on_light);
 						light_color *= irradiance;
 
 						if(dot(pos_on_light - position, geo_normal) > 0 && luminance(light_color) > 0)
 							valid_sample = true;
+					}
+					else
+					{
+						valid_sample = false;
 					}
 				}
 			}

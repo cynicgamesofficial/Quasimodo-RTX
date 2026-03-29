@@ -238,6 +238,145 @@ restir_get_light_index(uint lightData)
 	return lightData & 0x1FFFu; // lower 13 bits
 }
 
+float
+restir_dynlight_spot_falloff(uint dyn_idx, uint light_style, vec3 Ldir)
+{
+	mat3 onb = construct_ONB_frisvad(global_ubo.dyn_light_data[dyn_idx].spot_direction);
+	vec3 L_l = -Ldir * onb;
+	float cosTheta = L_l.y;
+	float falloff;
+
+	if(light_style == DYNLIGHT_SPOT_EMISSION_PROFILE_FALLOFF)
+	{
+		const vec2 spot_falloff = unpackHalf2x16(global_ubo.dyn_light_data[dyn_idx].spot_data);
+		const float cosTotalWidth = spot_falloff.x;
+		const float cosFalloffStart = spot_falloff.y;
+
+		if(cosTheta < cosTotalWidth)
+			falloff = 0.0;
+		else if(cosTheta > cosFalloffStart)
+			falloff = 1.0;
+		else
+		{
+			float delta = (cosTheta - cosTotalWidth) / (cosFalloffStart - cosTotalWidth);
+			falloff = (delta * delta) * (delta * delta);
+		}
+	}
+	else if(light_style == DYNLIGHT_SPOT_EMISSION_PROFILE_AXIS_ANGLE_TEXTURE)
+	{
+		const uint spot_data = global_ubo.dyn_light_data[dyn_idx].spot_data;
+		const float theta = acos(cosTheta);
+		const float totalWidth = unpackHalf2x16(spot_data).x;
+		const uint texture_num = spot_data >> 16;
+
+		if(cosTheta >= 0.0)
+		{
+			float tc = clamp(theta / totalWidth, 0.0, 1.0);
+			falloff = global_texture(texture_num, vec2(tc, 0.0)).r;
+		}
+		else
+			falloff = 0.0;
+	}
+	else
+		falloff = 0.0;
+
+	return falloff;
+}
+
+float
+restir_dynlight_spot_irradiance(uint dyn_idx, uint light_style, vec3 position, vec3 sample_pos)
+{
+	vec3 c = sample_pos - position;
+	float dist = length(c);
+	float rdist = 1.0 / max(dist, 1e-6);
+	vec3 Ldir = c * rdist;
+	float falloff = restir_dynlight_spot_falloff(dyn_idx, light_style, Ldir);
+	float irradiance = 2.0 * falloff * square(rdist);
+	return min(irradiance, 2.0 * M_PI);
+}
+
+float
+evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
+	vec3 position, vec3 normal, vec3 geo_normal, vec3 view_dir,
+	float phong_exp, float phong_scale, float phong_weight)
+{
+	if(restir_is_sun_light(lightData))
+	{
+		if(global_ubo.sun_visible == 0)
+			return 0.0;
+
+		float NdotL  = max(0.0, dot(normal, global_ubo.sun_direction));
+		float GNdotL = dot(geo_normal, global_ubo.sun_direction);
+
+		if(NdotL <= 0.0 || GNdotL <= 0.0)
+			return 0.0;
+
+		return luminance(sun_color_ubo.sun_color) * NdotL;
+	}
+
+	if(restir_is_dynamic_light(lightData))
+	{
+		uint dyn_idx = restir_get_light_index(lightData);
+		if(dyn_idx >= global_ubo.num_dyn_lights)
+			return 0.0;
+
+		vec3 color = global_ubo.dyn_light_data[dyn_idx].color;
+		uint light_type = global_ubo.dyn_light_data[dyn_idx].type & 0xffff;
+		uint light_style = global_ubo.dyn_light_data[dyn_idx].type >> 16;
+
+		if(light_type == DYNLIGHT_SPHERE)
+		{
+			vec3 center = global_ubo.dyn_light_data[dyn_idx].center;
+			float radius = global_ubo.dyn_light_data[dyn_idx].radius;
+
+			vec3 c = center - position;
+			float dist = length(c);
+			float rdist = 1.0 / max(dist, 1e-6);
+			vec3 L = c * rdist;
+			float NdotL = max(0.0, dot(normal, L));
+
+			if(dot(L, geo_normal) <= 0.0)
+				return 0.0;
+
+			float irradiance = 2.0 * (1.0 - sqrt(max(0.0, 1.0 - square(radius * rdist))));
+			return luminance(color) * irradiance * NdotL;
+		}
+		else if(light_type == DYNLIGHT_SPOT)
+		{
+			vec3 c = sample_pos - position;
+			if(dot(c, geo_normal) <= 0.0)
+				return 0.0;
+
+			float rdist = 1.0 / max(length(c), 1e-6);
+			vec3 L = c * rdist;
+			float NdotL = max(0.0, dot(normal, L));
+			float irradiance = restir_dynlight_spot_irradiance(dyn_idx, light_style, position, sample_pos);
+			return luminance(color) * irradiance * NdotL;
+		}
+		else
+		{
+			return 0.0;
+		}
+	}
+	else
+	{
+		uint poly_idx = restir_get_light_index(lightData);
+		if(poly_idx >= MAX_LIGHT_POLYS)
+			return 0.0;
+
+		LightPolygon light = get_light_polygon(poly_idx);
+
+		if(light.color.r < 0.0)
+			return 0.0;
+
+		float area = spherical_tri_area(light.positions, position, normal, view_dir,
+			phong_exp, phong_scale, phong_weight);
+		float light_lum = luminance(abs(light.color)) * light.light_style_scale;
+
+		return area * light_lum;
+	}
+}
+
 /*
  * Evaluate the target function p-hat for a stored light at an arbitrary surface.
  *

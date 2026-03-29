@@ -101,10 +101,13 @@ main()
 	if(ipos.x >= global_ubo.current_gpu_slice_width || ipos.y >= global_ubo.height)
 		return;
 
-	// Skip temporal reuse when the engine signals invalid history
-	// (first frame, map load, resize).  main.c zeroes flt_temporal_lf
-	// in exactly those cases --- same signal that ASVGF uses.
-	if(global_ubo.flt_temporal_lf == 0.0)
+	if(global_ubo.restir_temporal_bypass != 0)
+		return;
+
+	if(global_ubo.restir_history_valid == 0)
+		return;
+
+	if(global_ubo.restir_history_generation != global_ubo.restir_current_generation)
 		return;
 
 	// Load current reservoir (initial pass output)
@@ -186,8 +189,8 @@ main()
 		max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
 		0.0, 0.9);
 
-	// Re-evaluate previous light at current surface
-	float targetPdf_b_at_a = evaluate_restir_target(prev.lightData,
+	// Re-evaluate previous light at current surface using the reprojected sample position.
+	float targetPdf_b_at_a = evaluate_restir_target_sampled(prev.lightData, prev_sample_pos,
 		position, normal_curr, geo_normal, view_dir,
 		phong_exp, phong_scale, phong_weight);
 

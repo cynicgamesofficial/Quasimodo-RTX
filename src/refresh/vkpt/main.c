@@ -146,6 +146,69 @@ static bool dlss_eval_failure_logged = false;
 static bool dlss_hdr_input_logged = false;
 static bool dlss_depth_input_logged = false;
 
+typedef enum RestirDiResetReasonBits_e {
+	RESTIR_DI_RESET_MAP_LOAD                 = (1u << 0),
+	RESTIR_DI_RESET_SWAPCHAIN_RESIZE         = (1u << 1),
+	RESTIR_DI_RESET_RENDER_EXTENT_CHANGE     = (1u << 2),
+	RESTIR_DI_RESET_SCALE_CHANGE             = (1u << 3),
+	RESTIR_DI_RESET_PT_RESTIR_DI_TOGGLE      = (1u << 4),
+	RESTIR_DI_RESET_PT_RESTIR_SPATIAL_TOGGLE = (1u << 5),
+	RESTIR_DI_RESET_DIRECT_LIGHT_TOGGLE      = (1u << 6),
+	RESTIR_DI_RESET_LIGHT_TABLE_REBUILD      = (1u << 7),
+	RESTIR_DI_RESET_DLIGHT_TOPOLOGY_CHANGE   = (1u << 8),
+	RESTIR_DI_RESET_CAMERA_CUT               = (1u << 9),
+	RESTIR_DI_RESET_NON_WORLD_FRAME          = (1u << 10),
+	RESTIR_DI_RESET_INVALID_MOTION_HISTORY   = (1u << 11),
+} RestirDiResetReasonBits_t;
+
+#define RESTIR_DI_RESET_BUMP_GENERATION_MASK \
+	(RESTIR_DI_RESET_MAP_LOAD \
+	| RESTIR_DI_RESET_SWAPCHAIN_RESIZE \
+	| RESTIR_DI_RESET_RENDER_EXTENT_CHANGE \
+	| RESTIR_DI_RESET_SCALE_CHANGE \
+	| RESTIR_DI_RESET_PT_RESTIR_DI_TOGGLE \
+	| RESTIR_DI_RESET_PT_RESTIR_SPATIAL_TOGGLE \
+	| RESTIR_DI_RESET_DIRECT_LIGHT_TOGGLE \
+	| RESTIR_DI_RESET_LIGHT_TABLE_REBUILD \
+	| RESTIR_DI_RESET_DLIGHT_TOPOLOGY_CHANGE \
+	| RESTIR_DI_RESET_CAMERA_CUT)
+
+typedef struct RestirDiHistoryState_s {
+	uint32_t current_generation;
+	uint32_t history_generation;
+	uint32_t pending_reset_bits;
+	uint32_t frame_reset_bits;
+	uint32_t frame_temporal_bypass;
+	uint64_t dynlight_topology_hash;
+	uint64_t polygon_light_topology_hash;
+	VkExtent2D tracked_render_extent;
+	VkExtent2D tracked_output_extent;
+	int tracked_scale_marker;
+	bool history_valid;
+	bool frame_allow_history_production;
+	bool dynlight_hash_valid;
+	bool polygon_hash_valid;
+	bool extent_tracking_valid;
+} RestirDiHistoryState_t;
+
+static RestirDiHistoryState_t restir_di_history = {
+	.current_generation = 1u,
+	.history_generation = 0u,
+	.pending_reset_bits = 0u,
+	.frame_reset_bits = 0u,
+	.frame_temporal_bypass = 1u,
+	.dynlight_topology_hash = 0u,
+	.polygon_light_topology_hash = 0u,
+	.tracked_render_extent = { 0u, 0u },
+	.tracked_output_extent = { 0u, 0u },
+	.tracked_scale_marker = -1,
+	.history_valid = false,
+	.frame_allow_history_production = false,
+	.dynlight_hash_valid = false,
+	.polygon_hash_valid = false,
+	.extent_tracking_valid = false,
+};
+
 static float sky_rotation = 0.f;
 static int sky_autorotate = 0;
 static vec3_t sky_axis = { 0.f };
@@ -211,6 +274,12 @@ typedef struct picked_surface_format_s {
 
 void debug_output(const char* format, ...);
 static void recreate_swapchain(void);
+static void restir_di_request_reset(uint32_t reason_bits);
+static void restir_di_detect_extent_and_scale_resets(void);
+static void restir_di_detect_light_topology_resets(const refdef_t *fd, int num_model_lights, const light_poly_t *model_light_list);
+static void restir_di_begin_frame_state(bool render_world, bool restir_enabled);
+static void restir_di_end_frame_state(bool render_world, bool restir_enabled);
+static void restir_di_write_ubo(QVKUniformBuffer_t *ubo);
 
 static void viewsize_changed(cvar_t *self)
 {
@@ -245,6 +314,25 @@ static void accumulation_cvar_changed(cvar_t* self)
 	num_accumulated_frames = 0;
 	temporal_frame_valid = false;
 	dlss_reset_pending = true;
+	restir_di_request_reset(RESTIR_DI_RESET_CAMERA_CUT | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
+}
+
+static void restir_di_cvar_changed(cvar_t *self)
+{
+	if (self == cvar_pt_restir_di)
+	{
+		restir_di_request_reset(RESTIR_DI_RESET_PT_RESTIR_DI_TOGGLE);
+		return;
+	}
+	if (self == cvar_pt_restir_di_spatial)
+	{
+		restir_di_request_reset(RESTIR_DI_RESET_PT_RESTIR_SPATIAL_TOGGLE);
+		return;
+	}
+	if (self == cvar_pt_direct_polygon_lights || self == cvar_pt_direct_dyn_lights || self == cvar_pt_direct_sun_light)
+	{
+		restir_di_request_reset(RESTIR_DI_RESET_DIRECT_LIGHT_TOGGLE);
+	}
 }
 
 static void dlss_cvar_changed(cvar_t* self)
@@ -329,6 +417,210 @@ static void vkpt_dlss_update_forced_render_size(void)
 static inline bool extents_equal(VkExtent2D a, VkExtent2D b)
 {
 	return a.width == b.width && a.height == b.height;
+}
+
+static inline uint64_t restir_di_hash_append_bytes(uint64_t hash, const void *data, size_t size)
+{
+	const uint8_t *bytes = (const uint8_t *)data;
+	for (size_t i = 0; i < size; ++i)
+	{
+		hash ^= (uint64_t)bytes[i];
+		hash *= 1099511628211ull;
+	}
+	return hash;
+}
+
+static inline uint64_t restir_di_hash_append_u32(uint64_t hash, uint32_t value)
+{
+	return restir_di_hash_append_bytes(hash, &value, sizeof(value));
+}
+
+static inline uint64_t restir_di_hash_append_i32(uint64_t hash, int32_t value)
+{
+	return restir_di_hash_append_bytes(hash, &value, sizeof(value));
+}
+
+static inline uint64_t restir_di_hash_append_f32(uint64_t hash, float value)
+{
+	uint32_t bits = 0;
+	memcpy(&bits, &value, sizeof(bits));
+	return restir_di_hash_append_u32(hash, bits);
+}
+
+static uint64_t restir_di_hash_dynamic_lights(const dlight_t *lights, int num_lights)
+{
+	uint64_t hash = 1469598103934665603ull;
+	hash = restir_di_hash_append_i32(hash, num_lights);
+
+	for (int i = 0; i < num_lights; ++i)
+	{
+		const dlight_t *light = lights + i;
+		hash = restir_di_hash_append_f32(hash, light->origin[0]);
+		hash = restir_di_hash_append_f32(hash, light->origin[1]);
+		hash = restir_di_hash_append_f32(hash, light->origin[2]);
+		hash = restir_di_hash_append_f32(hash, light->color[0]);
+		hash = restir_di_hash_append_f32(hash, light->color[1]);
+		hash = restir_di_hash_append_f32(hash, light->color[2]);
+		hash = restir_di_hash_append_f32(hash, light->intensity);
+		hash = restir_di_hash_append_f32(hash, light->radius);
+		hash = restir_di_hash_append_i32(hash, (int32_t)light->light_type);
+
+		if (light->light_type == DLIGHT_SPOT)
+		{
+			hash = restir_di_hash_append_i32(hash, (int32_t)light->spot.emission_profile);
+			hash = restir_di_hash_append_f32(hash, light->spot.direction[0]);
+			hash = restir_di_hash_append_f32(hash, light->spot.direction[1]);
+			hash = restir_di_hash_append_f32(hash, light->spot.direction[2]);
+			if (light->spot.emission_profile == DLIGHT_SPOT_EMISSION_PROFILE_FALLOFF)
+			{
+				hash = restir_di_hash_append_f32(hash, light->spot.cos_total_width);
+				hash = restir_di_hash_append_f32(hash, light->spot.cos_falloff_start);
+			}
+			else
+			{
+				hash = restir_di_hash_append_f32(hash, light->spot.total_width);
+				hash = restir_di_hash_append_i32(hash, (int32_t)light->spot.texture);
+			}
+		}
+	}
+
+	return hash;
+}
+
+static uint64_t restir_di_hash_light_poly_topology(const light_poly_t *lights, int num_lights)
+{
+	uint64_t hash = 1469598103934665603ull;
+	hash = restir_di_hash_append_i32(hash, num_lights);
+
+	for (int i = 0; i < num_lights; ++i)
+	{
+		const light_poly_t *light = lights + i;
+		for (int p = 0; p < 9; ++p)
+			hash = restir_di_hash_append_f32(hash, light->positions[p]);
+		hash = restir_di_hash_append_i32(hash, (int32_t)light->cluster);
+		hash = restir_di_hash_append_i32(hash, (int32_t)light->style);
+	}
+
+	return hash;
+}
+
+static int restir_di_compute_scale_marker(void)
+{
+	if (vkpt_dlss_active())
+	{
+		int dlss_quality = cvar_pt_dlss_quality ? cvar_pt_dlss_quality->integer : 0;
+		dlss_quality = max(0, min(4, dlss_quality));
+		return -1000 - dlss_quality;
+	}
+
+	if (drs_effective_scale != 0)
+		return drs_effective_scale;
+
+	return scr_viewsize ? scr_viewsize->integer : 100;
+}
+
+static void restir_di_request_reset(uint32_t reason_bits)
+{
+	restir_di_history.pending_reset_bits |= reason_bits;
+}
+
+static void restir_di_detect_extent_and_scale_resets(void)
+{
+	int scale_marker = restir_di_compute_scale_marker();
+
+	if (restir_di_history.extent_tracking_valid)
+	{
+		if (!extents_equal(restir_di_history.tracked_output_extent, qvk.extent_unscaled))
+			restir_di_request_reset(RESTIR_DI_RESET_SWAPCHAIN_RESIZE);
+
+		if (!extents_equal(restir_di_history.tracked_render_extent, qvk.extent_render))
+			restir_di_request_reset(RESTIR_DI_RESET_RENDER_EXTENT_CHANGE);
+
+		if (restir_di_history.tracked_scale_marker != scale_marker)
+			restir_di_request_reset(RESTIR_DI_RESET_SCALE_CHANGE);
+	}
+
+	restir_di_history.tracked_render_extent = qvk.extent_render;
+	restir_di_history.tracked_output_extent = qvk.extent_unscaled;
+	restir_di_history.tracked_scale_marker = scale_marker;
+	restir_di_history.extent_tracking_valid = true;
+}
+
+static void restir_di_detect_light_topology_resets(const refdef_t *fd, int num_model_lights, const light_poly_t *model_light_list)
+{
+	if (!fd)
+		return;
+
+	const uint64_t dynlight_hash = restir_di_hash_dynamic_lights(fd->dlights, fd->num_dlights);
+	if (restir_di_history.dynlight_hash_valid && dynlight_hash != restir_di_history.dynlight_topology_hash)
+		restir_di_request_reset(RESTIR_DI_RESET_DLIGHT_TOPOLOGY_CHANGE);
+	restir_di_history.dynlight_topology_hash = dynlight_hash;
+	restir_di_history.dynlight_hash_valid = true;
+
+	uint64_t polygon_hash = 1469598103934665603ull;
+	if (vkpt_refdef.bsp_mesh_world_loaded && vkpt_refdef.bsp_mesh_world.light_polys && vkpt_refdef.bsp_mesh_world.num_light_polys > 0)
+	{
+		uint64_t world_hash = restir_di_hash_light_poly_topology(vkpt_refdef.bsp_mesh_world.light_polys, vkpt_refdef.bsp_mesh_world.num_light_polys);
+		polygon_hash = restir_di_hash_append_bytes(polygon_hash, &world_hash, sizeof(world_hash));
+	}
+
+	if (model_light_list && num_model_lights > 0)
+	{
+		uint64_t model_hash = restir_di_hash_light_poly_topology(model_light_list, num_model_lights);
+		polygon_hash = restir_di_hash_append_bytes(polygon_hash, &model_hash, sizeof(model_hash));
+	}
+	polygon_hash = restir_di_hash_append_i32(polygon_hash, num_model_lights);
+	polygon_hash = restir_di_hash_append_i32(polygon_hash, vkpt_refdef.bsp_mesh_world.num_light_polys);
+
+	if (restir_di_history.polygon_hash_valid && polygon_hash != restir_di_history.polygon_light_topology_hash)
+		restir_di_request_reset(RESTIR_DI_RESET_LIGHT_TABLE_REBUILD);
+
+	restir_di_history.polygon_light_topology_hash = polygon_hash;
+	restir_di_history.polygon_hash_valid = true;
+}
+
+static void restir_di_begin_frame_state(bool render_world, bool restir_enabled)
+{
+	restir_di_history.frame_reset_bits = restir_di_history.pending_reset_bits;
+	restir_di_history.pending_reset_bits = 0u;
+
+	if (restir_di_history.frame_reset_bits != 0u)
+	{
+		if ((restir_di_history.frame_reset_bits & RESTIR_DI_RESET_BUMP_GENERATION_MASK) != 0u)
+			restir_di_history.current_generation++;
+		restir_di_history.history_valid = false;
+	}
+
+	restir_di_history.frame_temporal_bypass =
+		(!restir_enabled || !render_world || !restir_di_history.history_valid || restir_di_history.frame_reset_bits != 0u) ? 1u : 0u;
+	restir_di_history.frame_allow_history_production =
+		(restir_enabled && render_world && restir_di_history.frame_reset_bits == 0u);
+}
+
+static void restir_di_end_frame_state(bool render_world, bool restir_enabled)
+{
+	if (restir_enabled && render_world && restir_di_history.frame_allow_history_production)
+	{
+		restir_di_history.history_valid = true;
+		restir_di_history.history_generation = restir_di_history.current_generation;
+	}
+	else
+	{
+		restir_di_history.history_valid = false;
+	}
+
+	restir_di_history.frame_temporal_bypass = 0u;
+	restir_di_history.frame_reset_bits = 0u;
+	restir_di_history.frame_allow_history_production = false;
+}
+
+static void restir_di_write_ubo(QVKUniformBuffer_t *ubo)
+{
+	ubo->restir_history_valid = restir_di_history.history_valid ? 1 : 0;
+	ubo->restir_current_generation = (int)restir_di_history.current_generation;
+	ubo->restir_history_generation = (int)restir_di_history.history_generation;
+	ubo->restir_reset_reason_bits = (int)restir_di_history.frame_reset_bits;
+	ubo->restir_temporal_bypass = (int)restir_di_history.frame_temporal_bypass;
 }
 
 static VkExtent2D get_render_extent(void)
@@ -447,6 +739,7 @@ void vkpt_reset_accumulation()
 	num_accumulated_frames = 0;
 	temporal_frame_valid = false;
 	dlss_reset_pending = true;
+	restir_di_request_reset(RESTIR_DI_RESET_CAMERA_CUT | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 }
 
 VkResult
@@ -3195,6 +3488,7 @@ prepare_ubo(refdef_t *fd, mleaf_t* viewleaf, const reference_mode_t* ref_mode, c
 
 	memcpy(ubo->cam_pos, fd->vieworg, sizeof(float) * 3);
 	ubo->cluster_debug_index = cluster_debug_index;
+	restir_di_write_ubo(ubo);
 
 	if (!temporal_frame_valid)
 	{
@@ -3260,6 +3554,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 	{
 		temporal_frame_valid = false;
 		dlss_reset_pending = true;
+		restir_di_request_reset(RESTIR_DI_RESET_NON_WORLD_FRAME | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 	}
 
 	static float previous_time = -1.f;
@@ -3299,6 +3594,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 	LOG_FUNC();
 	if (!vkpt_refdef.bsp_mesh_world_loaded && render_world)
 	{
+		restir_di_request_reset(RESTIR_DI_RESET_LIGHT_TABLE_REBUILD | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 		drs_last_frame_world = false;
 		return;
 	}
@@ -3343,6 +3639,11 @@ R_RenderFrame_RTX(refdef_t *fd)
 	}
 
 	vkpt_vertex_buffer_ensure_primbuf_size(upload_info.num_prims);
+
+	bool restir_enabled = (cvar_pt_restir_di && cvar_pt_restir_di->integer != 0);
+	if (render_world)
+		restir_di_detect_light_topology_resets(fd, num_model_lights, model_lights);
+	restir_di_begin_frame_state(render_world, restir_enabled);
 
 	QVKUniformBuffer_t *ubo = &vkpt_refdef.uniform_buffer;
 	prepare_ubo(fd, viewleaf, &ref_mode, sky_matrix, render_world);
@@ -3731,6 +4032,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 		vkpt_submit_command_buffer_simple(post_cmd_buf, qvk.queue_graphics, true);
 	}
 
+	restir_di_end_frame_state(render_world, restir_enabled);
 	temporal_frame_valid = ref_mode.enable_denoiser;
 	
 	frame_ready = true;
@@ -3763,6 +4065,7 @@ recreate_swapchain(void)
 
 	qvk.wait_for_idle_frames = MAX_FRAMES_IN_FLIGHT * 2;
 	dlss_reset_pending = true;
+	restir_di_request_reset(RESTIR_DI_RESET_SWAPCHAIN_RESIZE);
 }
 
 static int compare_doubles(const void* pa, const void* pb)
@@ -3945,6 +4248,7 @@ R_BeginFrame_RTX(void)
 	drs_process();
 	qvk.extent_render = get_render_extent();
 	qvk.gpu_slice_width = (qvk.extent_render.width + qvk.device_count - 1) / qvk.device_count;
+	restir_di_detect_extent_and_scale_resets();
 	static bool dlss_prev_valid = false;
 	static VkExtent2D dlss_prev_render = { 0 };
 	static VkExtent2D dlss_prev_output = { 0 };
@@ -4396,6 +4700,11 @@ R_Init_RTX(bool total)
 	cvar_pt_focus->changed = accumulation_cvar_changed;
 	cvar_pt_freecam->changed = accumulation_cvar_changed;
 	cvar_pt_projection->changed = accumulation_cvar_changed;
+	cvar_pt_restir_di->changed = restir_di_cvar_changed;
+	cvar_pt_restir_di_spatial->changed = restir_di_cvar_changed;
+	cvar_pt_direct_polygon_lights->changed = restir_di_cvar_changed;
+	cvar_pt_direct_dyn_lights->changed = restir_di_cvar_changed;
+	cvar_pt_direct_sun_light->changed = restir_di_cvar_changed;
 
 	cvar_pt_num_bounce_rays->flags |= CVAR_ARCHIVE;
 
@@ -4868,6 +5177,7 @@ R_BeginRegistration_RTX(const char *name)
 	vkpt_bloom_reset();
 	vkpt_tone_mapping_request_reset();
 	dlss_reset_pending = true;
+	restir_di_request_reset(RESTIR_DI_RESET_MAP_LOAD | RESTIR_DI_RESET_LIGHT_TABLE_REBUILD | RESTIR_DI_RESET_CAMERA_CUT);
 	vkpt_light_buffer_reset_counts();
 
 	memset(cluster_debug_mask, 0, sizeof(cluster_debug_mask));

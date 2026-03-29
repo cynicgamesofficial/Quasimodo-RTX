@@ -95,8 +95,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	UBO_CVAR_DO(pt_particle_brightness, 100) /* particle brightness */ \
 	UBO_CVAR_DO(pt_reflect_refract, 2) /* number of reflection or refraction bounces: 0, 1 or 2 */ \
 	UBO_CVAR_DO(pt_restir_di, 0) /* switch for ReSTIR DI direct lighting, 0 or 1 */ \
-	UBO_CVAR_DO(pt_restir_di_debug, 0) /* ReSTIR reservoir debug viz in direct_lighting.rgen: 0 off, 1 W, 2 M, 3 light type, 4 targetPdf (no estimator change) */ \
-	UBO_CVAR_DO(pt_restir_di_spatial, 1) /* enable spatial reuse for ReSTIR DI, 0 or 1 */ \
+	UBO_CVAR_DO(pt_restir_di_debug, 0) /* ReSTIR reservoir debug viz in direct_lighting.rgen: 0 off, 1 W, 2 M, 3 light type, 4 targetPdf, 5 temporal-vs-spatial M, 6 temporal lifecycle */ \
+	UBO_CVAR_DO(pt_restir_di_spatial, 0) /* enable spatial reuse for ReSTIR DI, 0 or 1 */ \
 	UBO_CVAR_DO(pt_roughness_override, -1) /* overrides roughness of all materials if non-negative, [0..1] */ \
 	UBO_CVAR_DO(pt_specular_anti_flicker, 2) /* fade factor for rough reflections of surfaces far away, [0..inf) */ \
 	UBO_CVAR_DO(pt_specular_mis, 1) /* enables the use of MIS between specular direct lighting and BRDF specular rays */ \
@@ -240,6 +240,11 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	\
 	GLOBAL_UBO_VAR_LIST_DO(int,             weapon_left_handed) \
 	GLOBAL_UBO_VAR_LIST_DO(float,           ui_color_scale) \
+	GLOBAL_UBO_VAR_LIST_DO(int,             restir_history_valid) \
+	GLOBAL_UBO_VAR_LIST_DO(int,             restir_current_generation) \
+	GLOBAL_UBO_VAR_LIST_DO(int,             restir_history_generation) \
+	GLOBAL_UBO_VAR_LIST_DO(int,             restir_reset_reason_bits) \
+	GLOBAL_UBO_VAR_LIST_DO(int,             restir_temporal_bypass) \
 	\
 	UBO_CVAR_LIST // WARNING: Do not put any other members into global_ubo after this: the CVAR list is not vec4-aligned
 
