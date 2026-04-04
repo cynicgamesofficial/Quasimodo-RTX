@@ -3197,15 +3197,20 @@ evaluate_taa_settings(const reference_mode_t* ref_mode)
 	qvk.effective_aa_mode = AA_MODE_OFF;
 	qvk.extent_taa_output = qvk.extent_render;
 
-	if (!ref_mode->enable_denoiser)
-		return;
-
 	if (vkpt_dlss_active())
 	{
+		/*
+		 * DLSS always writes a full output-resolution image into TAA_OUTPUT.
+		 * Keep post-DLSS consumers (tone mapping, bloom, final blit sizing)
+		 * on the output extent even when the denoiser/TAA path is disabled.
+		 */
 		qvk.effective_aa_mode = AA_MODE_OFF;
 		qvk.extent_taa_output = qvk.extent_unscaled;
 		return;
 	}
+
+	if (!ref_mode->enable_denoiser)
+		return;
 
 	int flt_taa = cvar_flt_taa->integer;
 	// FSR RCAS needs upscaled input; if EASU was disabled, force to TAAU
