@@ -267,8 +267,8 @@ main()
                 {
                     float variance_scale = global_ubo.flt_taa_variance;
 
-                    if(checkerboard_flags == (CHECKERBOARD_FLAG_REFLECTION | CHECKERBOARD_FLAG_REFRACTION))
-                        variance_scale *= 2;
+                    if(is_checkerboarded_surface)
+                        variance_scale *= 0.75;
 
                     vec3 sigma = sqrt(max(vec3(0), mom2 - mom1 * mom1));
                     vec3 mi = mom1 - sigma * variance_scale;
@@ -281,6 +281,8 @@ main()
                 float motion_weight = smoothstep(0, 1.0f, sqrt(dot(motion, motion)));
                 float sample_weight = get_sample_weight(nearest_render_pos - int_render_pos, global_ubo.taa_output_width * global_ubo.inv_width);
                 float pixel_weight = max(motion_weight, sample_weight) * 0.1f;
+                if(is_checkerboarded_surface)
+                    pixel_weight = max(pixel_weight, 0.2f);
                 pixel_weight = clamp(pixel_weight, 0, 1);
                 color_output = mix(color_prev, color_center, pixel_weight);
             }
