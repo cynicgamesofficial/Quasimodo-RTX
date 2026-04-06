@@ -274,6 +274,7 @@ typedef struct picked_surface_format_s {
 
 void debug_output(const char* format, ...);
 static void recreate_swapchain(void);
+static void invalidate_image_history(void);
 static void restir_di_request_reset(uint32_t reason_bits);
 static void restir_di_detect_extent_and_scale_resets(void);
 static void restir_di_detect_light_topology_resets(const refdef_t *fd, int num_model_lights, const light_poly_t *model_light_list);
@@ -311,9 +312,6 @@ static void accumulation_cvar_changed(cvar_t* self)
 {
 	// Reset accumulation rendering on DoF parameter change
 	(void)self;
-	num_accumulated_frames = 0;
-	temporal_frame_valid = false;
-	dlss_reset_pending = true;
 	restir_di_request_reset(RESTIR_DI_RESET_CAMERA_CUT | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 }
 
@@ -522,6 +520,9 @@ static int restir_di_compute_scale_marker(void)
 static void restir_di_request_reset(uint32_t reason_bits)
 {
 	restir_di_history.pending_reset_bits |= reason_bits;
+
+	if (reason_bits != 0u)
+		invalidate_image_history();
 }
 
 static void restir_di_detect_extent_and_scale_resets(void)
@@ -738,10 +739,14 @@ static VkExtent2D get_screen_image_extent(void)
 
 void vkpt_reset_accumulation()
 {
+	restir_di_request_reset(RESTIR_DI_RESET_CAMERA_CUT | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
+}
+
+static void invalidate_image_history(void)
+{
 	num_accumulated_frames = 0;
 	temporal_frame_valid = false;
 	dlss_reset_pending = true;
-	restir_di_request_reset(RESTIR_DI_RESET_CAMERA_CUT | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 }
 
 VkResult
@@ -3561,8 +3566,6 @@ R_RenderFrame_RTX(refdef_t *fd)
 	bool render_world = (fd->rdflags & RDF_NOWORLDMODEL) == 0;
 	if (!render_world)
 	{
-		temporal_frame_valid = false;
-		dlss_reset_pending = true;
 		restir_di_request_reset(RESTIR_DI_RESET_NON_WORLD_FRAME | RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 	}
 
@@ -4056,8 +4059,8 @@ R_RenderFrame_RTX(refdef_t *fd)
 
 static void temporal_cvar_changed(cvar_t *self)
 {
-	temporal_frame_valid = false;
-	dlss_reset_pending = true;
+	(void)self;
+	restir_di_request_reset(RESTIR_DI_RESET_INVALID_MOTION_HISTORY);
 }
 
 static void
@@ -4073,7 +4076,6 @@ recreate_swapchain(void)
 	vkpt_initialize_all(VKPT_INIT_SWAPCHAIN_RECREATE);
 
 	qvk.wait_for_idle_frames = MAX_FRAMES_IN_FLIGHT * 2;
-	dlss_reset_pending = true;
 	restir_di_request_reset(RESTIR_DI_RESET_SWAPCHAIN_RESIZE);
 }
 
@@ -5185,7 +5187,6 @@ R_BeginRegistration_RTX(const char *name)
 	vkpt_physical_sky_latch_local_time();
 	vkpt_bloom_reset();
 	vkpt_tone_mapping_request_reset();
-	dlss_reset_pending = true;
 	restir_di_request_reset(RESTIR_DI_RESET_MAP_LOAD | RESTIR_DI_RESET_LIGHT_TABLE_REBUILD | RESTIR_DI_RESET_CAMERA_CUT);
 	vkpt_light_buffer_reset_counts();
 
