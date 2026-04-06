@@ -74,6 +74,7 @@ filter_image(
 	float depth_center = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
 	float fwidth_depth = texelFetch(TEX_PT_MOTION, ipos, 0).w;
 	float roughness_center = texelFetch(TEX_PT_METALLIC_A, ipos, 0).y;
+	float spec_hit_dist_center = texelFetch(TEX_PT_SPEC_HIT_DIST_A, ipos, 0).x;
 
 	float lum_mean_hf = 0;
 	float sigma_l_hf = 0;
@@ -153,6 +154,7 @@ filter_image(
 
 			float depth = texelFetch(TEX_PT_VIEW_DEPTH_A, p, 0).x;
 			float roughness = texelFetch(TEX_PT_METALLIC_A, p, 0).y;
+			float spec_hit_dist = texelFetch(TEX_PT_SPEC_HIT_DIST_A, p, 0).x;
 
 			float dist_z = abs(depth_center - depth) * fwidth_depth * global_ubo.flt_atrous_depth;
 			w *= exp(-dist_z / float(step_size));
@@ -171,6 +173,16 @@ filter_image(
 			float w_spec = w_hf;
 			w_spec *= max(0, 1 - 10 * abs(roughness - roughness_center));
 			w_spec *= spec_filter_width_scale;
+
+			float spec_hit_dist_max = max(spec_hit_dist_center, spec_hit_dist);
+			if(spec_hit_dist_max > 1e-4)
+			{
+				// Keep the specular filter from blurring across reflected/refracted
+				// surfaces whose virtual path length differs too much.
+				float spec_hit_threshold = max(0.25, spec_hit_dist_max * 0.10);
+				float guide_weight = clamp(1.0 - abs(spec_hit_dist - spec_hit_dist_center) / spec_hit_threshold, 0.0, 1.0);
+				w_spec *= guide_weight;
+			}
 
 			float NdotN = max(0.0, dot(normal_center, normal));
 
