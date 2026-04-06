@@ -31,8 +31,261 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "path_tracer_rgen.h"
 #include "path_tracer_transparency.glsl"
+#include "projection.glsl"
+#include "restir_di.glsl"
 
 layout(constant_id = 0) const uint spec_bounce_index = 0;
+
+#define RESTIR_BOUNCE_DYN_MAX_SOLID_ANGLE 0.02
+
+bool
+restir_bounce_evaluate_dynamic_light(uint dyn_idx, vec3 sample_pos, vec3 position, vec3 geo_normal,
+	out vec3 light_color, out vec3 L)
+{
+	light_color = vec3(0.0);
+	L = vec3(0.0);
+
+	if(dyn_idx >= global_ubo.num_dyn_lights)
+		return false;
+
+	vec3 light_center = global_ubo.dyn_light_data[dyn_idx].center;
+	light_color       = global_ubo.dyn_light_data[dyn_idx].color;
+	uint light_type   = global_ubo.dyn_light_data[dyn_idx].type & 0xffffu;
+	uint light_style  = global_ubo.dyn_light_data[dyn_idx].type >> 16;
+
+	if(light_type == DYNLIGHT_SPHERE)
+	{
+		vec3 c = light_center - position;
+		float dist = length(c);
+		float rdist = 1.0 / max(dist, 1e-6);
+		float radius = global_ubo.dyn_light_data[dyn_idx].radius;
+		float irradiance = 2.0 * (1.0 - sqrt(max(0.0, 1.0 - square(radius * rdist))));
+		irradiance = min(irradiance, RESTIR_BOUNCE_DYN_MAX_SOLID_ANGLE);
+
+		L = c * rdist;
+		light_color *= irradiance;
+	}
+	else if(light_type == DYNLIGHT_SPOT)
+	{
+		vec3 c = sample_pos - position;
+		float rdist = 1.0 / max(length(c), 1e-6);
+		float irradiance = restir_dynlight_spot_irradiance(dyn_idx, light_style, position, sample_pos);
+		irradiance = min(irradiance, RESTIR_BOUNCE_DYN_MAX_SOLID_ANGLE);
+
+		L = c * rdist;
+		light_color *= irradiance;
+	}
+	else
+	{
+		return false;
+	}
+
+	if(dot(sample_pos - position, geo_normal) <= 0.0 || luminance(light_color) <= 0.0)
+		return false;
+
+	return true;
+}
+
+float
+evaluate_restir_bounce_target_sampled(uint lightData, vec3 sample_pos,
+	vec3 position, vec3 normal, vec3 geo_normal, vec3 view_dir,
+	float phong_exp, float phong_scale, float phong_weight)
+{
+	if(restir_is_dynamic_light(lightData))
+	{
+		vec3 light_color, L;
+		if(!restir_bounce_evaluate_dynamic_light(restir_get_light_index(lightData), sample_pos,
+			position, geo_normal, light_color, L))
+			return 0.0;
+
+		return luminance(light_color) * max(0.0, dot(normal, L));
+	}
+
+	return evaluate_restir_target_sampled(lightData, sample_pos,
+		position, normal, geo_normal, view_dir,
+		phong_exp, phong_scale, phong_weight);
+}
+
+bool
+restir_sample_bounce_local_light(vec3 position, vec3 normal, vec3 geo_normal,
+	uint cluster_idx, vec3 view_dir, bool is_gradient,
+	out Reservoir out_res, out vec3 out_sample_pos)
+{
+	const float roughness = 1.0;
+	const float alpha = roughness * roughness;
+	float phong_exp = RoughnessSquareToSpecPower(alpha);
+	float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
+	const float phong_weight = 0.0;
+
+	Reservoir r = reservoir_empty();
+	float weightSum = 0.0;
+	vec3 stored_sample_pos = vec3(0.0);
+
+	vec3 nee_rng = vec3(
+		get_rng(RNG_NEE_LIGHT_SELECTION(1)),
+		get_rng(RNG_NEE_TRI_X(1)),
+		get_rng(RNG_NEE_TRI_Y(1)));
+
+	if(global_ubo.pt_indirect_polygon_lights > 0)
+	{
+		vec3 pos_on_light;
+		vec3 light_color;
+		int poly_light_index;
+		float pdfw;
+		bool is_sky;
+
+		sample_polygonal_lights(
+			cluster_idx, position, normal, geo_normal,
+			view_dir, phong_exp, phong_scale, phong_weight,
+			is_gradient,
+			pos_on_light, light_color, poly_light_index, pdfw, is_sky, nee_rng);
+
+		if(poly_light_index >= 0 && pdfw > 0.0)
+		{
+			uint lightData = restir_encode_polygon_light(uint(poly_light_index));
+			float target_pdf = evaluate_restir_bounce_target_sampled(lightData, pos_on_light,
+				position, normal, geo_normal, view_dir,
+				phong_exp, phong_scale, phong_weight);
+
+			if(target_pdf > 0.0)
+			{
+				float ris_weight;
+
+				if(is_sky)
+				{
+					vec3 L = normalize(pos_on_light - position);
+					vec3 sky_radiance = env_map(L, true) * global_ubo.pt_env_scale;
+					float denom = luminance(abs(sky_radiance));
+					ris_weight = (denom > 1e-10)
+						? target_pdf * luminance(abs(light_color)) / denom
+						: 0.0;
+				}
+				else
+				{
+					LightPolygon lp = get_light_polygon(poly_light_index);
+					vec3 L = normalize(pos_on_light - position);
+					vec3 e1 = lp.positions[1] - lp.positions[0];
+					vec3 e2 = lp.positions[2] - lp.positions[0];
+					float spotlight = sqrt(max(0.0, -dot(normalize(cross(e1, e2)), L)));
+
+					float denom = luminance(abs(lp.color)) * spotlight * lp.light_style_scale;
+					ris_weight = (denom > 1e-10)
+						? target_pdf * luminance(abs(light_color)) / denom
+						: 0.0;
+				}
+
+				if(ris_weight > 0.0)
+				{
+					reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
+						0.0, pos_on_light, stored_sample_pos);
+				}
+			}
+		}
+	}
+
+	if(global_ubo.pt_indirect_dyn_lights > 0 && global_ubo.num_dyn_lights > 0)
+	{
+		vec3 pos_on_light;
+		vec3 light_color;
+
+		sample_dynamic_lights(
+			position, normal, geo_normal,
+			RESTIR_BOUNCE_DYN_MAX_SOLID_ANGLE,
+			pos_on_light, light_color, nee_rng);
+
+		if(luminance(light_color) > 0.0)
+		{
+			uint dyn_idx = min(uint(global_ubo.num_dyn_lights) - 1u,
+				uint(nee_rng.x * float(global_ubo.num_dyn_lights)));
+			uint lightData = restir_encode_dynamic_light(dyn_idx);
+			float target_pdf = evaluate_restir_bounce_target_sampled(lightData, pos_on_light,
+				position, normal, geo_normal, view_dir,
+				phong_exp, phong_scale, phong_weight);
+
+			if(target_pdf > 0.0)
+			{
+				float ris_weight = target_pdf * float(global_ubo.num_dyn_lights);
+				reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
+					get_rng(RNG_NEE_LIGHT_TYPE(1)), pos_on_light, stored_sample_pos);
+			}
+		}
+	}
+
+	reservoir_finalize(r, weightSum);
+
+	out_res = r;
+	out_sample_pos = stored_sample_pos;
+	return r.M > 0u && r.W > 0.0;
+}
+
+vec3
+restir_shade_bounce_local_light(Reservoir res, vec3 sample_pos, vec3 position,
+	vec3 normal, vec3 geo_normal, vec3 view_dir, int shadow_cull_mask)
+{
+	if(res.M == 0u || res.W <= 0.0)
+		return vec3(0.0);
+	if(restir_is_sun_light(res.lightData))
+		return vec3(0.0);
+	if(!restir_validate_light_sample_identity(res.lightData, sample_pos))
+		return vec3(0.0);
+
+	vec3 light_color = vec3(0.0);
+	vec3 L = vec3(0.0);
+	bool valid_sample = false;
+
+	if(restir_is_dynamic_light(res.lightData))
+	{
+		valid_sample = restir_bounce_evaluate_dynamic_light(restir_get_light_index(res.lightData),
+			sample_pos, position, geo_normal, light_color, L);
+	}
+	else
+	{
+		uint poly_idx = restir_get_light_index(res.lightData);
+
+		if(poly_idx < MAX_LIGHT_POLYS)
+		{
+			LightPolygon light = get_light_polygon(poly_idx);
+			mat3 projected = project_triangle(light.positions, position);
+			float pdfw = get_spherical_triangle_pdfw(projected);
+
+			if(pdfw > 0.0)
+			{
+				L = normalize(sample_pos - position);
+				float inv_pdfw = 1.0 / pdfw;
+
+				if(restir_is_sky_polygon_light(light))
+				{
+					light_color = env_map(L, true) * (inv_pdfw * global_ubo.pt_env_scale);
+
+					if(dot(L, geo_normal) > 0.0 && luminance(abs(light_color)) > 0.0)
+						valid_sample = true;
+				}
+				else
+				{
+					vec3 light_normal = normalize(cross(
+						light.positions[1] - light.positions[0],
+						light.positions[2] - light.positions[0]));
+					float LdotNL = max(0.0, -dot(light_normal, L));
+					float spotlight = sqrt(LdotNL);
+
+					light_color = light.color * (inv_pdfw * spotlight * light.light_style_scale);
+
+					if(dot(L, geo_normal) > 0.0 && luminance(abs(light_color)) > 0.0)
+						valid_sample = true;
+				}
+			}
+		}
+	}
+
+	if(!valid_sample)
+		return vec3(0.0);
+
+	Ray shadow_ray = get_shadow_ray(position - view_dir * 0.01, sample_pos, 0);
+	float vis = trace_shadow_ray(shadow_ray, shadow_cull_mask);
+	vec3 radiance = vis * light_color * res.W;
+	float NdotL = max(0.0, dot(normal, L));
+	return radiance * (NdotL / M_PI);
+}
 
 void
 indirect_lighting(
@@ -391,28 +644,47 @@ indirect_lighting(
 		{
 			bool is_gradient = get_is_gradient(ipos);
 
-			vec3 bounce_diffuse, bounce_specular;
-			get_direct_illumination(
-				bounce_position, 
-				bounce_geo_normal, 
-				bounce_geo_normal, 
-				bounce_cluster_idx, 
-				bounce_material_id, 
-				shadow_cull_mask, 
-				bounce_direction, 
-				bounce_base_color,
-				vec3(0), // base_reflectivity
-				0.0, // specular_factor
-				1.0, // roughness
-				MEDIUM_NONE, 
-				false, // enable_caustics
-				0.0, // direct_specular_weight
-		    	global_ubo.pt_indirect_polygon_lights > 0,
-		    	global_ubo.pt_indirect_dyn_lights > 0,
-		    	is_gradient,
-		    	1, // bounce
-		    	bounce_diffuse,
-				bounce_specular);
+			vec3 bounce_diffuse = vec3(0.0);
+			if(global_ubo.pt_restir_di != 0)
+			{
+				Reservoir bounce_res;
+				vec3 bounce_sample_pos;
+
+				if(restir_sample_bounce_local_light(
+					bounce_position, bounce_geo_normal, bounce_geo_normal,
+					bounce_cluster_idx, bounce_direction, is_gradient,
+					bounce_res, bounce_sample_pos))
+				{
+					bounce_diffuse = restir_shade_bounce_local_light(bounce_res, bounce_sample_pos,
+						bounce_position, bounce_geo_normal, bounce_geo_normal,
+						bounce_direction, shadow_cull_mask);
+				}
+			}
+			else
+			{
+				vec3 bounce_specular;
+				get_direct_illumination(
+					bounce_position, 
+					bounce_geo_normal, 
+					bounce_geo_normal, 
+					bounce_cluster_idx, 
+					bounce_material_id, 
+					shadow_cull_mask, 
+					bounce_direction, 
+					bounce_base_color,
+					vec3(0), // base_reflectivity
+					0.0, // specular_factor
+					1.0, // roughness
+					MEDIUM_NONE, 
+					false, // enable_caustics
+					0.0, // direct_specular_weight
+		    		global_ubo.pt_indirect_polygon_lights > 0,
+		    		global_ubo.pt_indirect_dyn_lights > 0,
+		    		is_gradient,
+		    		1, // bounce
+		    		bounce_diffuse,
+					bounce_specular);
+			}
 
 			bounce_contrib += bounce_throughput * bounce_diffuse;
 		}
