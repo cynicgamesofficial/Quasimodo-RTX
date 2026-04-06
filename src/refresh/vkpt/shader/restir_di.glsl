@@ -469,6 +469,14 @@ restir_dynlight_spot_irradiance(uint dyn_idx, uint light_style, vec3 position, v
 }
 
 float
+restir_dynamic_brdf_weight(vec3 normal, vec3 view_dir, vec3 L,
+	float phong_exp, float phong_scale, float phong_weight)
+{
+	float specular = phong(normal, L, view_dir, phong_exp) * phong_scale;
+	return mix(1.0, specular, phong_weight);
+}
+
+float
 evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 	vec3 position, vec3 normal, vec3 geo_normal, vec3 view_dir,
 	float phong_exp, float phong_scale, float phong_weight)
@@ -506,13 +514,14 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 			float dist = length(c);
 			float rdist = 1.0 / max(dist, 1e-6);
 			vec3 L = c * rdist;
-			float NdotL = max(0.0, dot(normal, L));
 
 			if(dot(L, geo_normal) <= 0.0)
 				return 0.0;
 
 			float irradiance = 2.0 * (1.0 - sqrt(max(0.0, 1.0 - square(radius * rdist))));
-			return luminance(color) * irradiance * NdotL;
+			float brdf_weight = restir_dynamic_brdf_weight(
+				normal, view_dir, L, phong_exp, phong_scale, phong_weight);
+			return luminance(color) * irradiance * brdf_weight;
 		}
 		else if(light_type == DYNLIGHT_SPOT)
 		{
@@ -522,9 +531,10 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 
 			float rdist = 1.0 / max(length(c), 1e-6);
 			vec3 L = c * rdist;
-			float NdotL = max(0.0, dot(normal, L));
 			float irradiance = restir_dynlight_spot_irradiance(dyn_idx, light_style, position, sample_pos);
-			return luminance(color) * irradiance * NdotL;
+			float brdf_weight = restir_dynamic_brdf_weight(
+				normal, view_dir, L, phong_exp, phong_scale, phong_weight);
+			return luminance(color) * irradiance * brdf_weight;
 		}
 		else
 		{
@@ -556,7 +566,7 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
  * Polygon lights:  spherical_tri_area * polygon-target-weight
  *                  where sky polygons use the same negative-color rule and
  *                  luminance clamping as sample_polygonal_lights().
- * Dynamic lights:  sphere-irradiance  * luminance(color)      * NdotL
+ * Dynamic lights:  dynamic-irradiance * luminance(color)      * specular-aware BRDF weight
  * Sun:             luminance(sun_color) * NdotL
  *
  * Returns 0 if the light is invisible from the surface.
@@ -589,20 +599,42 @@ evaluate_restir_target(uint lightData,
 		vec3  center = global_ubo.dyn_light_data[dyn_idx].center;
 		vec3  color  = global_ubo.dyn_light_data[dyn_idx].color;
 		float radius = global_ubo.dyn_light_data[dyn_idx].radius;
+		uint  light_type = global_ubo.dyn_light_data[dyn_idx].type & 0xffffu;
+		uint  light_style = global_ubo.dyn_light_data[dyn_idx].type >> 16;
 
-		vec3  c     = center - position;
-		float dist  = length(c);
-		float rdist = 1.0 / max(dist, 1e-6);
-		vec3  L     = c * rdist;
-		float NdotL = max(0.0, dot(normal, L));
+		if(light_type == DYNLIGHT_SPHERE)
+		{
+			vec3  c     = center - position;
+			float dist  = length(c);
+			float rdist = 1.0 / max(dist, 1e-6);
+			vec3  L     = c * rdist;
 
-		if(dot(L, geo_normal) <= 0.0)
+			if(dot(L, geo_normal) <= 0.0)
+				return 0.0;
+
+			// Approximate irradiance from a sphere (same formula as compute_dynlight_sphere)
+			float irradiance = 2.0 * (1.0 - sqrt(max(0.0, 1.0 - square(radius * rdist))));
+			float brdf_weight = restir_dynamic_brdf_weight(
+				normal, view_dir, L, phong_exp, phong_scale, phong_weight);
+			return luminance(color) * irradiance * brdf_weight;
+		}
+		else if(light_type == DYNLIGHT_SPOT)
+		{
+			vec3 c = center - position;
+			if(dot(c, geo_normal) <= 0.0)
+				return 0.0;
+
+			float rdist = 1.0 / max(length(c), 1e-6);
+			vec3 L = c * rdist;
+			float irradiance = restir_dynlight_spot_irradiance(dyn_idx, light_style, position, center);
+			float brdf_weight = restir_dynamic_brdf_weight(
+				normal, view_dir, L, phong_exp, phong_scale, phong_weight);
+			return luminance(color) * irradiance * brdf_weight;
+		}
+		else
+		{
 			return 0.0;
-
-		// Approximate irradiance from a sphere (same formula as compute_dynlight_sphere)
-		float irradiance = 2.0 * (1.0 - sqrt(max(0.0, 1.0 - square(radius * rdist))));
-
-		return luminance(color) * irradiance * NdotL;
+		}
 	}
 	else
 	{
