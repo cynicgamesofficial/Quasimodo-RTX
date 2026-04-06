@@ -176,11 +176,16 @@ main()
 		// Surface similarity (slightly tighter depth threshold than temporal)
 		float depth_n  = texelFetch(TEX_PT_VIEW_DEPTH_A, npos, 0).x;
 		vec3  normal_n = decode_normal(texelFetch(TEX_PT_NORMAL_A, npos, 0).x);
+		float roughness_n = texelFetch(TEX_PT_METALLIC_A, npos, 0).y;
 
 		if(dot(normal_curr, normal_n) < 0.95)
 			continue;
 		float depth_ratio = max(depth_curr, depth_n) / max(min(depth_curr, depth_n), 1e-6);
 		if(depth_ratio > 1.05)
+			continue;
+		// Avoid spatially reusing reservoirs across strong roughness transitions:
+		// the final BRDF response can differ noticeably even on the same plane.
+		if(abs(roughness - roughness_n) > 0.12)
 			continue;
 
 		neighbor.M = min(neighbor.M, RESTIR_M_CAP);
