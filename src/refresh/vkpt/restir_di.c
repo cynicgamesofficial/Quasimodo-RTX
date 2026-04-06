@@ -110,65 +110,6 @@ vkpt_restir_di_destroy_pipelines(void)
 		); \
 	} while(0)
 
-static void
-copy_restir_history_image(VkCommandBuffer cmd_buf, VkImage src_image, VkImage dst_image)
-{
-	VkImageSubresourceRange subresource_range = {
-		.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-		.baseMipLevel   = 0,
-		.levelCount     = 1,
-		.baseArrayLayer = 0,
-		.layerCount     = 1
-	};
-
-	VkImageCopy image_copy_region = {
-		.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-		.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-		.extent = { qvk.gpu_slice_width, qvk.extent_render.height, 1 }
-	};
-
-	IMAGE_BARRIER(cmd_buf,
-		.image = src_image,
-		.subresourceRange = subresource_range,
-		.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
-	);
-
-	IMAGE_BARRIER(cmd_buf,
-		.image = dst_image,
-		.subresourceRange = subresource_range,
-		.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-	);
-
-	vkCmdCopyImage(cmd_buf,
-		src_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		1, &image_copy_region);
-
-	IMAGE_BARRIER(cmd_buf,
-		.image = src_image,
-		.subresourceRange = subresource_range,
-		.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL
-	);
-
-	IMAGE_BARRIER(cmd_buf,
-		.image = dst_image,
-		.subresourceRange = subresource_range,
-		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL
-	);
-}
-
 VkResult
 vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 {
@@ -216,8 +157,8 @@ vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf)
 
 		int other_reservoir  = VKPT_IMG_RESTIR_RESERVOIR_A  + ((qvk.frame_counter + 1) & 1);
 		int other_sample_pos = VKPT_IMG_RESTIR_SAMPLE_POS_A + ((qvk.frame_counter + 1) & 1);
-		copy_restir_history_image(cmd_buf, qvk.images[other_reservoir], qvk.images[current_reservoir]);
-		copy_restir_history_image(cmd_buf, qvk.images[other_sample_pos], qvk.images[current_sample_pos]);
+		BARRIER_COMPUTE(cmd_buf, qvk.images[other_reservoir]);
+		BARRIER_COMPUTE(cmd_buf, qvk.images[other_sample_pos]);
 		END_PERF_MARKER(cmd_buf, PROFILER_RESTIR_DI_SPATIAL);
 	}
 

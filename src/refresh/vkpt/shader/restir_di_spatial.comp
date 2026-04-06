@@ -22,11 +22,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 // For each pixel: load the post-temporal reservoir from RESERVOIR_A, gather
 // up to N nearby neighbors (also from RESERVOIR_A), apply surface similarity
 // rejection, re-evaluate the neighbor's light at the current surface, and
-// combine via RIS. The result is written to scratch RESERVOIR_B because the
-// pass must not update RESERVOIR_A in-place while neighbors are still reading it.
+// combine via RIS.  The result is written to RESERVOIR_B (safe: temporal
+// already consumed B, so no read-write hazard).
 //
-// After this dispatch, the host copies the final spatial result back into
-// RESERVOIR_A so shading and next-frame temporal reuse share the same owner.
+// direct_lighting.rgen reads from B when spatial reuse is active.
 // ========================================================================== //
 
 #version 460
