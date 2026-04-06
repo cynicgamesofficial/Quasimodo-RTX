@@ -124,6 +124,24 @@ vec4 safe_load(ivec2 pos)
     return imageLoad(IMG_ASVGF_COLOR, pos);
 }
 
+float safe_load_spec_hit_dist(ivec2 pos)
+{
+    if(pos.x >= global_ubo.width || pos.y >= global_ubo.height)
+        return 0.0;
+
+    return texelFetch(TEX_PT_SPEC_HIT_DIST_A, pos, 0).x;
+}
+
+float spec_hit_guide_weight(float center_dist, float sample_dist)
+{
+    float max_dist = max(center_dist, sample_dist);
+    if(max_dist <= 1e-4)
+        return 1.0;
+
+    float threshold = max(0.25, max_dist * 0.10);
+    return clamp(1.0 - abs(sample_dist - center_dist) / threshold, 0.0, 1.0);
+}
+
 ivec2 get_output_position()
 {
     return ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
@@ -153,26 +171,46 @@ void main()
     // Don't do the filter if there is no checkerboarding - which improves sharpness and reduces sparkles.
     if(is_checkerboarded_surface)
     {
-        vec4 a = safe_load(ipos + ivec2(other_side_offset, 1));
-        vec4 b = safe_load(ipos + ivec2(other_side_offset, -1));
-        vec4 c = safe_load(ipos + ivec2(other_side_offset, 0));
-        vec4 d = safe_load(ipos + ivec2(other_side_offset + (((opos.x & 1) != 0) ? 1 : -1), 0));
+        float center_spec_hit_dist = safe_load_spec_hit_dist(ipos);
+
+        ivec2 apos = ipos + ivec2(other_side_offset, 1);
+        ivec2 bpos = ipos + ivec2(other_side_offset, -1);
+        ivec2 cpos = ipos + ivec2(other_side_offset, 0);
+        ivec2 dpos = ipos + ivec2(other_side_offset + (((opos.x & 1) != 0) ? 1 : -1), 0);
+
+        vec4 a = safe_load(apos);
+        vec4 b = safe_load(bpos);
+        vec4 c = safe_load(cpos);
+        vec4 d = safe_load(dpos);
+
+        float wa = spec_hit_guide_weight(center_spec_hit_dist, safe_load_spec_hit_dist(apos));
+        float wb = spec_hit_guide_weight(center_spec_hit_dist, safe_load_spec_hit_dist(bpos));
+        float wc = spec_hit_guide_weight(center_spec_hit_dist, safe_load_spec_hit_dist(cpos));
+        float wd = spec_hit_guide_weight(center_spec_hit_dist, safe_load_spec_hit_dist(dpos));
 
         if(gl_GlobalInvocationID.x == 0 || gl_GlobalInvocationID.x == global_ubo.width - 1)
         {
             c = vec4(0);
             d = vec4(0);
+            wc = 0.0;
+            wd = 0.0;
         }
 
-        vec4 neighbors = (a + b + c + d) * 0.25;
+        float neighbor_sum_w = wa + wb + wc + wd;
+        vec4 neighbors = vec4(0);
+        if(neighbor_sum_w > 0.0)
+            neighbors = (a * wa + b * wb + c * wc + d * wd) / neighbor_sum_w;
 
         // Make sure that transparent surfaces contain motion vectors for the brightest component
-        // (reflection or refraction), not a mix of both. Helps with TAA quality.
-        if(luminance(neighbors.rgb) > luminance(center.rgb))
+        // (reflection or refraction), not a mix of both. Also require the opposite-field
+        // virtual path length to remain compatible with the center pixel, otherwise the
+        // motion vector tends to destabilize reflected/refracted TAA history.
+        if(wc > 0.0 && luminance(neighbors.rgb) > luminance(center.rgb))
             use_center_mv = false;
 
         // Blend the color, not the checkerboard flags.
-        color.rgb = mix(center.rgb, neighbors.rgb, 0.5);
+        float neighbor_blend = 0.5 * clamp(neighbor_sum_w * 0.25, 0.0, 1.0);
+        color.rgb = mix(center.rgb, neighbors.rgb, neighbor_blend);
         color.a = center.a;
     }
     else
