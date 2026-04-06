@@ -239,6 +239,27 @@ restir_get_light_index(uint lightData)
 }
 
 bool
+restir_is_sky_polygon_light(LightPolygon light)
+{
+	return light.color.r < 0.0;
+}
+
+float
+restir_get_polygon_target_weight(LightPolygon light)
+{
+	float light_lum = luminance(light.color) * light.light_style_scale;
+
+	if(light_lum < 0.0 && global_ubo.environment_type == ENVIRONMENT_DYNAMIC)
+	{
+		return clamp(sun_color_ubo.sky_luminance,
+			global_ubo.pt_min_log_sky_luminance,
+			global_ubo.pt_max_log_sky_luminance);
+	}
+
+	return abs(light_lum);
+}
+
+bool
 restir_is_finite_float(float v)
 {
 	return !isnan(v) && !isinf(v);
@@ -324,8 +345,6 @@ restir_validate_polygon_sample_identity(uint poly_idx, vec3 sample_pos)
 		return false;
 
 	LightPolygon light = get_light_polygon(poly_idx);
-	if(light.color.r < 0.0)
-		return false;
 	if(!restir_is_finite_vec3(light.color))
 		return false;
 
@@ -520,12 +539,9 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 
 		LightPolygon light = get_light_polygon(poly_idx);
 
-		if(light.color.r < 0.0)
-			return 0.0;
-
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
 			phong_exp, phong_scale, phong_weight);
-		float light_lum = luminance(abs(light.color)) * light.light_style_scale;
+		float light_lum = restir_get_polygon_target_weight(light);
 
 		return area * light_lum;
 	}
@@ -537,7 +553,9 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
  * Used during both initial candidate generation and temporal re-evaluation.
  * This is the SOLE definition of the target function; both passes must agree.
  *
- * Polygon lights:  spherical_tri_area * luminance(|emission|) * style
+ * Polygon lights:  spherical_tri_area * polygon-target-weight
+ *                  where sky polygons use the same negative-color rule and
+ *                  luminance clamping as sample_polygonal_lights().
  * Dynamic lights:  sphere-irradiance  * luminance(color)      * NdotL
  * Sun:             luminance(sun_color) * NdotL
  *
@@ -594,15 +612,10 @@ evaluate_restir_target(uint lightData,
 
 		LightPolygon light = get_light_polygon(poly_idx);
 
-		// Sky polygon lights encode a negative sentinel in light.color ---
-		// not supported in Milestone 1.
-		if(light.color.r < 0.0)
-			return 0.0;
-
 		// spherical_tri_area already includes a BRDF-weighted factor
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
 			phong_exp, phong_scale, phong_weight);
-		float light_lum = luminance(abs(light.color)) * light.light_style_scale;
+		float light_lum = restir_get_polygon_target_weight(light);
 
 		return area * light_lum;
 	}
