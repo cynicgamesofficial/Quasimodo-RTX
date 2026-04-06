@@ -125,6 +125,7 @@ main()
 	// Current surface for similarity check
 	float depth_curr  = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
 	vec3  normal_curr = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+	float roughness_curr = texelFetch(TEX_PT_METALLIC_A, ipos, 0).y;
 
 	// ---- Reproject to previous frame (checkerboard coordinates) ---- //
 	vec4  motion   = texelFetch(TEX_PT_MOTION, ipos, 0);
@@ -159,8 +160,17 @@ main()
 	// Surface similarity gate
 	float depth_prev  = texelFetch(TEX_PT_VIEW_DEPTH_B, ipos_prev, 0).x;
 	vec3  normal_prev = decode_normal(texelFetch(TEX_PT_NORMAL_B, ipos_prev, 0).x);
+	float roughness_prev = texelFetch(TEX_PT_METALLIC_B, ipos_prev, 0).y;
 
 	if(!restir_surface_similar(normal_curr, normal_prev, depth_curr, depth_prev))
+	{
+		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
+		return;
+	}
+	// Match the spatial reuse guard: avoid carrying history across strong
+	// roughness changes, where the BRDF response can shimmer even if
+	// motion/depth reprojection still lands on the same surface.
+	if(abs(roughness_curr - roughness_prev) > 0.12)
 	{
 		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 		return;
