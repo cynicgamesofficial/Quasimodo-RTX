@@ -183,6 +183,8 @@ main()
     vec3 color_center;
     int checkerboard_flags;
     get_shared_color(int_render_pos, group_base_lores, color_center, checkerboard_flags);
+    bool is_checkerboarded_surface = bitCount(checkerboard_flags & CHECKERBOARD_FLAG_FIELD_MASK) > 1;
+    float depth_center = texelFetch(TEX_FLAT_DEPTH, int_render_pos, 0).x;
     
     vec3 color_output = color_center;
     vec3 linear_color_output;
@@ -215,14 +217,25 @@ main()
         mom1 /= float(num_pix);
         mom2 /= float(num_pix);
 
-        // Find the longest motion vector in a 3x3 window
-        vec2 motion;
+        // Find the longest motion vector in a 3x3 window. For checkerboarded
+        // reflection/refraction surfaces, keep the search on the same current-frame
+        // depth layer so TAA doesn't borrow a longer but incompatible neighbor motion.
+        vec2 motion = get_shared_motion(int_render_pos, group_base_lores);
         {
-            float len = -1;
+            float len = dot(motion, motion);
             const int r = 1;
             for(int yy = -r; yy <= r; yy++) {
                 for(int xx = -r; xx <= r; xx++) {
                     ivec2 p = int_render_pos + ivec2(xx, yy);
+
+                    if(is_checkerboarded_surface)
+                    {
+                        float depth = texelFetch(TEX_FLAT_DEPTH, p, 0).x;
+                        float depth_threshold = max(0.25, max(depth_center, depth) * 0.05);
+                        if(abs(depth - depth_center) > depth_threshold)
+                            continue;
+                    }
+
                     vec2 m = get_shared_motion(p, group_base_lores);
                     float l = dot(m, m);
                     if(l > len) {
