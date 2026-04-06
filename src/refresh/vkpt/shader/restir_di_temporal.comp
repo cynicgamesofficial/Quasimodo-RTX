@@ -125,7 +125,17 @@ main()
 	// Current surface for similarity check
 	float depth_curr  = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
 	vec3  normal_curr = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
-	float roughness_curr = texelFetch(TEX_PT_METALLIC_A, ipos, 0).y;
+	vec4  base_color_curr = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+	vec2  metal_rough_curr = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
+	float metallic_curr = metal_rough_curr.x;
+	float roughness_curr = metal_rough_curr.y;
+	float specular_factor_curr = base_color_curr.a;
+	vec3  albedo_curr, base_reflectivity_curr;
+	get_reflectivity(base_color_curr.rgb, metallic_curr, albedo_curr, base_reflectivity_curr);
+	float phong_weight_curr = clamp(
+		specular_factor_curr * luminance(base_reflectivity_curr) /
+		max(luminance(base_reflectivity_curr) + luminance(albedo_curr), 1e-6),
+		0.0, 0.9);
 
 	// ---- Reproject to previous frame (checkerboard coordinates) ---- //
 	vec4  motion   = texelFetch(TEX_PT_MOTION, ipos, 0);
@@ -160,7 +170,17 @@ main()
 	// Surface similarity gate
 	float depth_prev  = texelFetch(TEX_PT_VIEW_DEPTH_B, ipos_prev, 0).x;
 	vec3  normal_prev = decode_normal(texelFetch(TEX_PT_NORMAL_B, ipos_prev, 0).x);
-	float roughness_prev = texelFetch(TEX_PT_METALLIC_B, ipos_prev, 0).y;
+	vec4  base_color_prev = texelFetch(TEX_PT_BASE_COLOR_B, ipos_prev, 0);
+	vec2  metal_rough_prev = texelFetch(TEX_PT_METALLIC_B, ipos_prev, 0).xy;
+	float metallic_prev = metal_rough_prev.x;
+	float roughness_prev = metal_rough_prev.y;
+	float specular_factor_prev = base_color_prev.a;
+	vec3  albedo_prev, base_reflectivity_prev;
+	get_reflectivity(base_color_prev.rgb, metallic_prev, albedo_prev, base_reflectivity_prev);
+	float phong_weight_prev = clamp(
+		specular_factor_prev * luminance(base_reflectivity_prev) /
+		max(luminance(base_reflectivity_prev) + luminance(albedo_prev), 1e-6),
+		0.0, 0.9);
 
 	if(!restir_surface_similar(normal_curr, normal_prev, depth_curr, depth_prev))
 	{
@@ -175,6 +195,32 @@ main()
 		imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
 		return;
 	}
+	// Specular and metallic-looking materials are where the remaining shimmer is
+	// most visible. Tighten temporal reuse only when either surface has a
+	// meaningful specular lobe, using the same BRDF controls that drive target
+	// construction and final shading.
+	if(max(phong_weight_curr, phong_weight_prev) > 0.15)
+	{
+		if(abs(phong_weight_curr - phong_weight_prev) > 0.08)
+		{
+			imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
+			return;
+		}
+
+		if(abs(specular_factor_curr - specular_factor_prev) > 0.10)
+		{
+			imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
+			return;
+		}
+
+		vec3 reflectivity_delta = abs(base_reflectivity_curr - base_reflectivity_prev);
+		float reflectivity_delta_max = max(reflectivity_delta.x, max(reflectivity_delta.y, reflectivity_delta.z));
+		if(reflectivity_delta_max > 0.12)
+		{
+			imageStore(IMG_RESTIR_SAMPLE_POS_A, ipos, vec4(stored_sample_pos, 1.0));
+			return;
+		}
+	}
 
 	// Clamp previous M to bound temporal drift
 	prev.M = min(prev.M, RESTIR_M_CAP);
@@ -183,19 +229,7 @@ main()
 	//   weightSumA = current.targetPdf * current.W * float(current.M)
 	float weightSumA = current.targetPdf * current.W * float(current.M);
 
-	bool prev_is_sky_polygon = false;
-	if(!restir_is_sun_light(prev.lightData) && !restir_is_dynamic_light(prev.lightData))
-	{
-		uint prev_poly_idx = restir_get_light_index(prev.lightData);
-		if(prev_poly_idx < MAX_LIGHT_POLYS)
-			prev_is_sky_polygon = restir_is_sky_polygon_light(get_light_polygon(prev_poly_idx));
-	}
-	// Sky polygon lights now have visible-surface coverage again, but their
-	// temporal target uses a clamped scalar sky luminance while final shading
-	// uses directional env-map radiance. Keep them single-frame for now to avoid
-	// reprojecting history across that mismatch.
 	bool prev_identity_valid = !restir_is_sun_light(prev.lightData) &&
-		!prev_is_sky_polygon &&
 		restir_validate_light_sample_identity(prev.lightData, prev_sample_pos);
 	if(prev_identity_valid)
 	{
@@ -204,25 +238,14 @@ main()
 		vec3  geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
 		vec3  view_dir   = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
 
-		vec4  base_color  = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
-		vec2  metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
-		float roughness   = metal_rough.y;
-		float alpha       = roughness * roughness;
+		float alpha       = roughness_curr * roughness_curr;
 		float phong_exp   = RoughnessSquareToSpecPower(alpha);
 		float phong_scale = min(100.0, 1.0 / (M_PI * alpha * alpha));
-		float specular_factor = base_color.a;
-		float metallic    = metal_rough.x;
-		vec3  albedo, base_reflectivity;
-		get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
-		float phong_weight = clamp(
-			specular_factor * luminance(base_reflectivity) /
-			max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
-			0.0, 0.9);
 
 		// Re-evaluate previous light at current surface using the reprojected sample position.
 		float targetPdf_b_at_a = evaluate_restir_target_sampled(prev.lightData, prev_sample_pos,
 			position, normal_curr, geo_normal, view_dir,
-			phong_exp, phong_scale, phong_weight);
+			phong_exp, phong_scale, phong_weight_curr);
 
 		if(targetPdf_b_at_a > 0.0)
 		{
