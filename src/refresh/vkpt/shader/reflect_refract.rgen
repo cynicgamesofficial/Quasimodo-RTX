@@ -536,6 +536,7 @@ main()
 		imageStore(IMG_PT_SHADING_POSITION, ipos, vec4(position + direction * PRIMARY_RAY_T_MAX, uintBitsToFloat(material_id)));
 		imageStore(IMG_PT_VIEW_DIRECTION, ipos, vec4(direction, float(checkerboard_flags | checkerboard_weapon_flag)));
 		imageStore(IMG_PT_VIEW_DEPTH_A, ipos, vec4(-PRIMARY_RAY_T_MAX));
+		imageStore(IMG_PT_SPEC_HIT_DIST_A, ipos, vec4(0));
 		imageStore(IMG_PT_GODRAYS_THROUGHPUT_DIST, ipos, vec4(throughput, PRIMARY_RAY_T_MAX));
 		
 		return;
@@ -781,4 +782,7 @@ main()
 	imageStore(IMG_PT_CLUSTER_A, ipos, uvec4(cluster_idx));
 	imageStore(IMG_PT_BASE_COLOR_A, ipos, vec4(primary_base_color, primary_specular_factor));
 	imageStore(IMG_PT_METALLIC_A, ipos, vec4(primary_metallic, primary_roughness, 0, 0));
+	// Use the accumulated optical path length as a narrow specular-stability guide
+	// for the temporal filter. Primary surfaces keep this at 0 in primary_rays.rgen.
+	imageStore(IMG_PT_SPEC_HIT_DIST_A, ipos, vec4(optical_path_length));
 }

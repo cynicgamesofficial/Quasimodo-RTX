@@ -161,6 +161,7 @@ main()
 
 	vec2 metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
 	float shininess = clamp(2.0 / square(square(metal_rough.y)) - 2.0, 0.0, 32.0);
+	float spec_hit_dist_curr = texelFetch(TEX_PT_SPEC_HIT_DIST_A, ipos, 0).x;
 
 	vec3 geo_normal_curr = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
 
@@ -210,6 +211,7 @@ main()
 			float depth_prev = texelFetch(TEX_PT_VIEW_DEPTH_B, p, 0).x;
 			vec3  normal_prev = decode_normal(texelFetch(TEX_PT_NORMAL_B, p, 0).x);
 			vec3  geo_normal_prev = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_B, p, 0).x);
+			float spec_hit_dist_prev = texelFetch(TEX_PT_SPEC_HIT_DIST_B, p, 0).x;
 
 			float dist_depth = abs(depth_curr - depth_prev + motion.z) / abs(depth_curr);
 			float dot_normals = dot(normal_curr, normal_prev);
@@ -226,6 +228,17 @@ main()
 			{
 				float w_diff = w[i] * max(dot_normals, 0);
 				float w_spec = w[i] * pow(max(dot_normals, 0), shininess);
+
+				float spec_hit_dist_max = max(spec_hit_dist_curr, spec_hit_dist_prev);
+				if(spec_hit_dist_max > 1e-4)
+				{
+					// Reflected/refracted visible surfaces need a stricter temporal check than
+					// the generic depth/normal gate. Use the accumulated spec path length as a
+					// narrow guide, similar in spirit to RTXPT's spec-hit-distance input.
+					float spec_hit_threshold = max(0.25, spec_hit_dist_max * 0.10);
+					if(abs(spec_hit_dist_curr - spec_hit_dist_prev) > spec_hit_threshold)
+						w_spec = 0.0;
+				}
 
 				SH hist_color_lf = load_SH(TEX_ASVGF_HIST_COLOR_LF_SH_B, TEX_ASVGF_HIST_COLOR_LF_COCG_B, p);
 				accumulate_SH(temporal_color_lf, hist_color_lf, w_diff);
