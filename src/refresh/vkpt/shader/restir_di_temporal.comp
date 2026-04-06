@@ -183,7 +183,19 @@ main()
 	//   weightSumA = current.targetPdf * current.W * float(current.M)
 	float weightSumA = current.targetPdf * current.W * float(current.M);
 
+	bool prev_is_sky_polygon = false;
+	if(!restir_is_sun_light(prev.lightData) && !restir_is_dynamic_light(prev.lightData))
+	{
+		uint prev_poly_idx = restir_get_light_index(prev.lightData);
+		if(prev_poly_idx < MAX_LIGHT_POLYS)
+			prev_is_sky_polygon = restir_is_sky_polygon_light(get_light_polygon(prev_poly_idx));
+	}
+	// Sky polygon lights now have visible-surface coverage again, but their
+	// temporal target uses a clamped scalar sky luminance while final shading
+	// uses directional env-map radiance. Keep them single-frame for now to avoid
+	// reprojecting history across that mismatch.
 	bool prev_identity_valid = !restir_is_sun_light(prev.lightData) &&
+		!prev_is_sky_polygon &&
 		restir_validate_light_sample_identity(prev.lightData, prev_sample_pos);
 	if(prev_identity_valid)
 	{
