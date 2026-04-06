@@ -313,21 +313,42 @@ restir_validate_dynamic_sample_identity(uint dyn_idx, vec3 sample_pos)
 		float axis_len = length(axis);
 		if(!restir_is_finite_float(axis_len) || axis_len <= 1e-4)
 			return false;
-		axis /= axis_len;
 
 		vec3 rel = sample_pos - center;
 		if(!restir_is_finite_vec3(rel))
 			return false;
 
-		float axial = dot(rel, axis);
-		vec3 radial = rel - axis * axial;
-		float axial_tol = max(1e-3, 0.01 * radius);
-		if(abs(axial) > axial_tol)
+		// Validate against the same emitter-disk basis used by compute_dynlight_spot().
+		// The client path uploads spotlight directions without normalizing them first,
+		// so validating against an idealized normalized axis can reject samples that
+		// the legacy path still considers valid.
+		mat3 onb = construct_ONB_frisvad(axis);
+		vec3 basis_u = onb[0];
+		vec3 basis_v = onb[2];
+
+		float g00 = dot(basis_u, basis_u);
+		float g01 = dot(basis_u, basis_v);
+		float g11 = dot(basis_v, basis_v);
+		float det = g00 * g11 - g01 * g01;
+		if(!restir_is_finite_float(det) || abs(det) <= 1e-12)
 			return false;
 
-		float radial2 = dot(radial, radial);
-		float radial_limit = radius * 1.05;
-		if(radial2 > radial_limit * radial_limit)
+		float d0 = dot(rel, basis_u);
+		float d1 = dot(rel, basis_v);
+		float coeff_u = (d0 * g11 - d1 * g01) / det;
+		float coeff_v = (d1 * g00 - d0 * g01) / det;
+		if(!restir_is_finite_float(coeff_u) || !restir_is_finite_float(coeff_v))
+			return false;
+
+		vec3 reconstructed = basis_u * coeff_u + basis_v * coeff_v;
+		float residual = length(rel - reconstructed);
+		float plane_tol = max(1e-3, 0.01 * radius * max(length(basis_u), length(basis_v)));
+		if(!restir_is_finite_float(residual) || residual > plane_tol)
+			return false;
+
+		float disk_u = coeff_u / max(radius, 1e-6);
+		float disk_v = coeff_v / max(radius, 1e-6);
+		if(disk_u * disk_u + disk_v * disk_v > square(1.05))
 			return false;
 
 		return true;
