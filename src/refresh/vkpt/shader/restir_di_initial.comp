@@ -262,45 +262,9 @@ main()
 		}
 	}
 
-	// ---- Candidate 3: sun ---- //
-	if(global_ubo.pt_direct_sun_light != 0 && global_ubo.sun_visible != 0)
-	{
-		bool sky_vis = (cluster_idx == ~0u) ||
-			(light_buffer.sky_visibility[cluster_idx >> 5] & (1u << (cluster_idx & 31u))) != 0u;
-
-		if(sky_vis)
-		{
-			vec2 rng_sun = vec2(get_rng(RNG_RESTIR_SUN_X), get_rng(RNG_RESTIR_SUN_Y));
-			vec2 disk = sample_disk(rng_sun);
-			disk *= global_ubo.sun_tan_half_angle;
-
-			vec3 sun_dir = normalize(global_ubo.sun_direction
-				+ global_ubo.sun_tangent * disk.x
-				+ global_ubo.sun_bitangent * disk.y);
-
-			float NdotL  = dot(sun_dir, normal);
-			float GNdotL = dot(sun_dir, geo_normal);
-
-			if(NdotL > 0.0 && GNdotL > 0.0)
-			{
-				uint lightData = restir_encode_sun();
-
-				float target_pdf = evaluate_restir_target(lightData,
-					position, normal, geo_normal, view_dir,
-					phong_exp, phong_scale, phong_weight);
-
-				if(target_pdf > 0.0)
-				{
-				float ris_weight = target_pdf;
-				vec3 pos_on_light = position + sun_dir * 10000.0;
-				stored_sample_pos = pos_on_light;
-
-				reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
-					get_rng(RNG_RESTIR_INSERT_SUN), pos_on_light, stored_sample_pos);
-				}
-			}
-		}
-	}
+	// Visible sun remains on the legacy get_sunlight() path. Reusing the sampled
+	// sun-disk shadow direction through the local-light reservoir was diverging
+	// from Q2RTX's visible-surface sun/material behavior.
 
 	reservoir_finalize(r, weightSum);
 	imageStore(IMG_RESTIR_RESERVOIR_A, ipos, reservoir_pack(r));

@@ -173,7 +173,8 @@ main()
 	//   weightSumA = current.targetPdf * current.W * float(current.M)
 	float weightSumA = current.targetPdf * current.W * float(current.M);
 
-	bool prev_identity_valid = restir_validate_light_sample_identity(prev.lightData, prev_sample_pos);
+	bool prev_identity_valid = !restir_is_sun_light(prev.lightData) &&
+		restir_validate_light_sample_identity(prev.lightData, prev_sample_pos);
 	if(prev_identity_valid)
 	{
 		// ---- Full surface data for target re-evaluation ---- //

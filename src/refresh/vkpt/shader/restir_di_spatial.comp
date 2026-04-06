@@ -170,6 +170,8 @@ main()
 		Reservoir neighbor = reservoir_unpack(imageLoad(IMG_RESTIR_RESERVOIR_A, npos));
 		if(neighbor.M == 0)
 			continue;
+		if(restir_is_sun_light(neighbor.lightData))
+			continue;
 
 		// Surface similarity (slightly tighter depth threshold than temporal)
 		float depth_n  = texelFetch(TEX_PT_VIEW_DEPTH_A, npos, 0).x;

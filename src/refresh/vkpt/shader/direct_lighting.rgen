@@ -208,18 +208,8 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 			}
 			else if(restir_is_sun_light(res.lightData))
 			{
-				if(global_ubo.sun_visible != 0)
-				{
-					vec3 L = normalize(pos_on_light - position);
-					float NdotL  = dot(L, normal);
-					float GNdotL = dot(L, geo_normal);
-
-					if(NdotL > 0.0 && GNdotL > 0.0)
-					{
-						light_color  = sun_color_ubo.sun_color;
-						valid_sample = true;
-					}
-				}
+				// Visible sun is shaded by the legacy get_sunlight() path below.
+				valid_sample = false;
 			}
 			else if(restir_is_dynamic_light(res.lightData))
 			{
@@ -364,7 +354,7 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
     high_freq += direct_diffuse;
     o_specular += direct_specular;
 	
-	bool suppress_legacy_sun = suppress_sun_for_restir_debug || (global_ubo.pt_restir_di != 0);
+	bool suppress_legacy_sun = suppress_sun_for_restir_debug;
 	if(global_ubo.pt_direct_sun_light != 0 && !suppress_legacy_sun)
 	{
 		vec3 direct_sun_diffuse, direct_sun_specular;
