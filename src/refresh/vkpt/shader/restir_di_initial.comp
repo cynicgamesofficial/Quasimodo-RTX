@@ -175,7 +175,7 @@ main()
 			is_gradient,
 			pos_on_light, light_color, poly_light_index, pdfw, is_sky, rng);
 
-		if(poly_light_index >= 0 && pdfw > 0)
+		if(poly_light_index >= 0 && pdfw > 0 && !is_sky)
 		{
 			uint lightData = restir_encode_polygon_light(uint(poly_light_index));
 
@@ -187,34 +187,20 @@ main()
 			if(target_pdf > 0.0)
 			{
 				// Derive ris_weight = target_pdf / source_pdf.
-				float ris_weight;
+				// sample_polygonal_lights returns:
+				//   light_color = emission * (1/pdfw) * spotlight * style / pdf_cdf
+				// so source_pdf = pdf_cdf * pdfw
+				//               = lum(|emission|) * spotlight * style / lum(|light_color|)
+				LightPolygon lp = get_light_polygon(poly_light_index);
+				vec3  L  = normalize(pos_on_light - position);
+				vec3  e1 = lp.positions[1] - lp.positions[0];
+				vec3  e2 = lp.positions[2] - lp.positions[0];
+				float spotlight = sqrt(max(0.0, -dot(normalize(cross(e1, e2)), L)));
 
-				if(is_sky)
-				{
-					vec3 L = normalize(pos_on_light - position);
-					vec3 sky_radiance = env_map(L, true) * global_ubo.pt_env_scale;
-					float denom = luminance(abs(sky_radiance));
-					ris_weight = (denom > 1e-10)
-						? target_pdf * luminance(abs(light_color)) / denom
-						: 0.0;
-				}
-				else
-				{
-					// sample_polygonal_lights returns:
-					//   light_color = emission * (1/pdfw) * spotlight * style / pdf_cdf
-					// so source_pdf = pdf_cdf * pdfw
-					//               = lum(|emission|) * spotlight * style / lum(|light_color|)
-					LightPolygon lp = get_light_polygon(poly_light_index);
-					vec3  L  = normalize(pos_on_light - position);
-					vec3  e1 = lp.positions[1] - lp.positions[0];
-					vec3  e2 = lp.positions[2] - lp.positions[0];
-					float spotlight = sqrt(max(0.0, -dot(normalize(cross(e1, e2)), L)));
-
-					float denom = luminance(abs(lp.color)) * spotlight * lp.light_style_scale;
-					ris_weight = (denom > 1e-10)
-						? target_pdf * luminance(abs(light_color)) / denom
-						: 0.0;
-				}
+				float denom = luminance(abs(lp.color)) * spotlight * lp.light_style_scale;
+				float ris_weight = (denom > 1e-10)
+					? target_pdf * luminance(abs(light_color)) / denom
+					: 0.0;
 
 				if(ris_weight > 0.0)
 					reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,

@@ -119,6 +119,100 @@ restir_di_debug_visualize(Reservoir res, int mode)
 }
 
 void
+get_visible_sky_polygon_illumination(
+	vec3 position,
+	vec3 normal,
+	vec3 geo_normal,
+	uint cluster_idx,
+	vec3 view_direction,
+	vec3 albedo,
+	vec3 base_reflectivity,
+	float specular_factor,
+	float roughness,
+	int surface_medium,
+	bool enable_caustics,
+	float direct_specular_weight,
+	bool is_gradient,
+	out vec3 diffuse,
+	out vec3 specular,
+	int shadow_cull_mask)
+{
+	diffuse = vec3(0.0);
+	specular = vec3(0.0);
+
+	if(global_ubo.pt_direct_polygon_lights <= 0)
+		return;
+
+	float alpha = square(roughness);
+	float phong_exp = RoughnessSquareToSpecPower(alpha);
+	float phong_scale = min(100.0, 1.0 / (M_PI * square(alpha)));
+	float phong_weight = clamp(
+		specular_factor * luminance(base_reflectivity) /
+		max(luminance(base_reflectivity) + luminance(albedo), 1e-6),
+		0.0, 0.9);
+
+	vec3 pos_on_light;
+	vec3 light_color;
+	int poly_light_index;
+	float pdfw;
+	bool is_sky_light;
+	vec3 rng = vec3(
+		get_rng(RNG_NEE_LIGHT_SELECTION(0)),
+		get_rng(RNG_NEE_TRI_X(0)),
+		get_rng(RNG_NEE_TRI_Y(0)));
+
+	sample_polygonal_lights(
+		cluster_idx,
+		position,
+		normal,
+		geo_normal,
+		view_direction,
+		phong_exp,
+		phong_scale,
+		phong_weight,
+		is_gradient,
+		pos_on_light,
+		light_color,
+		poly_light_index,
+		pdfw,
+		is_sky_light,
+		rng);
+
+	if(poly_light_index < 0 || pdfw <= 0.0 || !is_sky_light)
+		return;
+
+	Ray shadow_ray = get_shadow_ray(position - view_direction * 0.01, pos_on_light, 0);
+	float vis = trace_shadow_ray(shadow_ray, shadow_cull_mask);
+
+#ifdef ENABLE_SHADOW_CAUSTICS
+	if(enable_caustics)
+		light_color *= trace_caustic_ray(shadow_ray, surface_medium);
+#endif
+
+	vec3 radiance = vis * light_color;
+	vec3 L = normalize(pos_on_light - position);
+
+	if(direct_specular_weight > 0.0 && global_ubo.pt_specular_mis != 0)
+	{
+		direct_specular_weight *= get_specular_sampled_lighting_weight(
+			roughness, normal, -view_direction, L, pdfw);
+	}
+
+	vec3 F = vec3(0.0);
+	if(vis > 0.0 && direct_specular_weight > 0.0)
+	{
+		vec3 specular_brdf = GGX_times_NdotL(
+			view_direction, L, normal, roughness,
+			base_reflectivity, 0.0, specular_factor, F);
+		specular = radiance * specular_brdf * direct_specular_weight;
+	}
+
+	float NdotL = max(0.0, dot(normal, L));
+	float diffuse_brdf = NdotL / M_PI;
+	diffuse = radiance * diffuse_brdf * (vec3(1.0) - F);
+}
+
+void
 direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out vec3 o_specular)
 {
 	high_freq = vec3(0);
@@ -349,6 +443,30 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 			0,
 			direct_diffuse,
 			direct_specular);
+	}
+
+	if(global_ubo.pt_restir_di != 0 && !suppress_sun_for_restir_debug)
+	{
+		vec3 direct_sky_diffuse, direct_sky_specular;
+		get_visible_sky_polygon_illumination(
+			position,
+			normal,
+			geo_normal,
+			cluster_idx,
+			view_direction.xyz,
+			primary_albedo,
+			primary_base_reflectivity,
+			primary_specular_factor,
+			primary_roughness,
+			primary_medium,
+			spec_enable_caustics != 0,
+			direct_specular_weight,
+			is_gradient,
+			direct_sky_diffuse,
+			direct_sky_specular,
+			shadow_cull_mask);
+		direct_diffuse += direct_sky_diffuse;
+		direct_specular += direct_sky_specular;
 	}
 
     high_freq += direct_diffuse;
