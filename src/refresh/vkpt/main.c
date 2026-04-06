@@ -552,10 +552,6 @@ static void restir_di_detect_light_topology_resets(const refdef_t *fd, int num_m
 		return;
 
 	const uint64_t dynlight_hash = restir_di_hash_dynamic_lights(fd->dlights, fd->num_dlights);
-	if (restir_di_history.dynlight_hash_valid && dynlight_hash != restir_di_history.dynlight_topology_hash)
-	{
-		restir_di_request_reset(RESTIR_DI_RESET_DLIGHT_TOPOLOGY_CHANGE);
-	}
 	restir_di_history.dynlight_topology_hash = dynlight_hash;
 	restir_di_history.dynlight_hash_valid = true;
 
@@ -566,12 +562,13 @@ static void restir_di_detect_light_topology_resets(const refdef_t *fd, int num_m
 		polygon_hash = restir_di_hash_append_bytes(polygon_hash, &world_hash, sizeof(world_hash));
 	}
 
-	if (model_light_list && num_model_lights > 0)
-	{
-		uint64_t model_hash = restir_di_hash_light_poly_topology(model_light_list, num_model_lights);
-		polygon_hash = restir_di_hash_append_bytes(polygon_hash, &model_hash, sizeof(model_hash));
-	}
-	polygon_hash = restir_di_hash_append_i32(polygon_hash, num_model_lights);
+	// Dynamic lights and transient model lights (such as beams) are validated
+	// per-reservoir in the ReSTIR passes. Resetting the whole history whenever
+	// their frame-local state changes causes repeated temporal bypass during
+	// transient light events, which is far more damaging than selectively
+	// dropping only the invalid reused samples.
+	(void)model_light_list;
+	(void)num_model_lights;
 	polygon_hash = restir_di_hash_append_i32(polygon_hash, vkpt_refdef.bsp_mesh_world.num_light_polys);
 
 	if (restir_di_history.polygon_hash_valid && polygon_hash != restir_di_history.polygon_light_topology_hash)
