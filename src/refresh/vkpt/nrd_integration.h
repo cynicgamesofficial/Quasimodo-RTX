@@ -8,6 +8,7 @@
  * Phase 1: Vulkan resource creation — pipelines, textures, samplers,
  *          descriptor sets, constant buffer.
  * Phase 2: Input packing — GBuffers → NRD input format.
+ * Phase 3: NRD dispatch — SetCommonSettings → GetComputeDispatches → record.
  */
 
 #ifndef NRD_INTEGRATION_H
@@ -44,6 +45,12 @@ VkResult vkpt_nrd_destroy_pipelines(void);
  * Reads engine GBuffers, writes NRD-formatted input images.
  * Must be called AFTER path tracing and BEFORE NRD dispatch. */
 VkResult vkpt_nrd_pack_inputs(VkCommandBuffer cmd_buf);
+
+/* Record NRD denoiser dispatches into cmd_buf.
+ * Fills CommonSettings from engine UBO, sets RELAX denoiser defaults,
+ * then records all compute dispatches returned by NRD.
+ * Must be called AFTER vkpt_nrd_pack_inputs(). */
+VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf);
 
 #ifdef __cplusplus
 }

@@ -6,6 +6,8 @@
  *          descriptor sets, constant buffer.  No dispatching yet.
  * Phase 2: Input packing — compute shader converts engine GBuffers into
  *          NRD-formatted input images (normal+roughness, radiance+hitdist).
+ * Phase 3: NRD dispatch — SetCommonSettings, SetDenoiserSettings,
+ *          GetComputeDispatches → record per-dispatch command buffer.
  */
 
 #include "NRD.h"
@@ -41,6 +43,12 @@ static void      destroy_input_images(void);
 static bool      create_pack_descriptor_resources(void);
 static void      destroy_pack_descriptor_resources(void);
 static void      update_pack_descriptor_set(void);
+
+/* Phase 3: NRD dispatch */
+static bool      create_output_images(uint16_t render_width, uint16_t render_height);
+static void      destroy_output_images(void);
+static VkImageView resolve_nrd_image_view(nrd::ResourceType type, uint16_t index_in_pool,
+                                          nrd::DescriptorType desc_type);
 
 /* ------------------------------------------------------------------ */
 /*  Per-texture bookkeeping                                            */
@@ -112,6 +120,16 @@ static VkDescriptorSet       s_pack_desc_set        = VK_NULL_HANDLE;
 static VkPipelineLayout      s_pack_pipeline_layout  = VK_NULL_HANDLE;
 static VkPipeline            s_pack_pipeline         = VK_NULL_HANDLE;
 static bool                  s_input_images_transitioned = false;
+
+/* ------------------------------------------------------------------ */
+/*  Phase 3: NRD output images & dispatch state                        */
+/* ------------------------------------------------------------------ */
+
+static NrdTexture s_output_diff_radiance = {};  /* RGBA16F denoised diffuse  */
+static NrdTexture s_output_spec_radiance = {};  /* RGBA16F denoised specular */
+
+static bool       s_pool_textures_transitioned = false;
+static float      s_prev_jitter[2] = {0.0f, 0.0f};
 
 /* ------------------------------------------------------------------ */
 /*  NRD Format → VkFormat                                              */
@@ -621,8 +639,13 @@ static bool create_constant_buffer(void)
     const nrd::InstanceDesc *inst = nrd::GetInstanceDesc(*s_nrd_instance);
     if (!inst) return false;
 
-    VkDeviceSize cb_size = inst->constantBufferMaxDataSize;
-    if (cb_size == 0) cb_size = 128 * 1024;
+    /* Size enough for all dispatches, not just one.
+     * constantBufferMaxDataSize is the per-dispatch maximum; multiply by
+     * pipeline count to cover sequential sub-allocation during dispatch. */
+    VkDeviceSize per_dispatch = inst->constantBufferMaxDataSize;
+    if (per_dispatch == 0) per_dispatch = 4096;
+    VkDeviceSize cb_size = per_dispatch * inst->pipelinesNum;
+    if (cb_size < 128 * 1024) cb_size = 128 * 1024;
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         VkResult res = buffer_create(&s_constant_buffers[i], cb_size,
@@ -782,6 +805,38 @@ static void destroy_input_images(void)
     destroy_single_texture(&s_input_diff_radiance);
     destroy_single_texture(&s_input_spec_radiance);
     s_input_images_transitioned = false;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 3: NRD output images                                         */
+/* ------------------------------------------------------------------ */
+
+static bool create_output_images(uint16_t render_width, uint16_t render_height)
+{
+    if (!create_single_texture(&s_output_diff_radiance,
+                               VK_FORMAT_R16G16B16A16_SFLOAT,
+                               render_width, render_height,
+                               "NRD_OUT_DIFF_RADIANCE_HITDIST")) {
+        return false;
+    }
+
+    if (!create_single_texture(&s_output_spec_radiance,
+                               VK_FORMAT_R16G16B16A16_SFLOAT,
+                               render_width, render_height,
+                               "NRD_OUT_SPEC_RADIANCE_HITDIST")) {
+        destroy_single_texture(&s_output_diff_radiance);
+        return false;
+    }
+
+    Com_Printf("[NRD] Created 2 output images (%ux%u)\n", render_width, render_height);
+    return true;
+}
+
+static void destroy_output_images(void)
+{
+    destroy_single_texture(&s_output_diff_radiance);
+    destroy_single_texture(&s_output_spec_radiance);
+    s_pool_textures_transitioned = false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1011,6 +1066,10 @@ extern "C" qboolean vkpt_nrd_init(uint16_t render_width, uint16_t render_height)
                                        { vkpt_nrd_destroy(); return qfalse; }
     update_pack_descriptor_set();
 
+    /* --- Phase 3: Output images --- */
+    if (!create_output_images(render_width, render_height))
+                                       { vkpt_nrd_destroy(); return qfalse; }
+
     s_initialized = true;
     Com_Printf("[NRD] Fully initialized (render %ux%u)\n", render_width, render_height);
 
@@ -1020,6 +1079,9 @@ extern "C" qboolean vkpt_nrd_init(uint16_t render_width, uint16_t render_height)
 extern "C" void vkpt_nrd_destroy(void)
 {
     vkDeviceWaitIdle(qvk.device);
+
+    /* Phase 3 teardown */
+    destroy_output_images();
 
     /* Phase 2 teardown */
     vkpt_nrd_destroy_pipelines();
@@ -1061,6 +1123,7 @@ extern "C" qboolean vkpt_nrd_resize(uint16_t render_width, uint16_t render_heigh
 
     destroy_pool_textures();
     destroy_input_images();
+    destroy_output_images();
 
     s_render_width  = render_width;
     s_render_height = render_height;
@@ -1075,6 +1138,11 @@ extern "C" qboolean vkpt_nrd_resize(uint16_t render_width, uint16_t render_heigh
         return qfalse;
     }
     update_pack_descriptor_set();
+
+    if (!create_output_images(render_width, render_height)) {
+        Com_EPrintf("[NRD] resize: failed to recreate output images\n");
+        return qfalse;
+    }
 
     Com_Printf("[NRD] Resized to %ux%u\n", render_width, render_height);
     return qtrue;
@@ -1183,6 +1251,321 @@ extern "C" VkResult vkpt_nrd_pack_inputs(VkCommandBuffer cmd_buf)
     barrier_compute_write(cmd_buf, s_input_normal_roughness.image);
     barrier_compute_write(cmd_buf, s_input_diff_radiance.image);
     barrier_compute_write(cmd_buf, s_input_spec_radiance.image);
+
+    return VK_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 3: NRD resource resolver                                     */
+/* ------------------------------------------------------------------ */
+
+/* Map an NRD ResourceType + indexInPool to the corresponding VkImageView.
+ * For IN_NORMAL_ROUGHNESS the view depends on descriptor type:
+ *   TEXTURE → A2B10G10R10_UNORM (for NRD sampled reads)
+ *   STORAGE_TEXTURE → R32_UINT (for storage writes)                      */
+static VkImageView resolve_nrd_image_view(nrd::ResourceType type,
+                                          uint16_t index_in_pool,
+                                          nrd::DescriptorType desc_type)
+{
+    switch (type) {
+    /* Engine aliased inputs */
+    case nrd::ResourceType::IN_MV:
+        return qvk.images_views[VKPT_IMG_PT_MOTION];
+    case nrd::ResourceType::IN_VIEWZ:
+        return qvk.images_views[VKPT_IMG_PT_VIEW_DEPTH_A];
+
+    /* Converted inputs (written by pack shader) */
+    case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
+        return (desc_type == nrd::DescriptorType::TEXTURE)
+            ? s_input_normal_roughness_unorm_view
+            : s_input_normal_roughness.view;
+    case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
+        return s_input_diff_radiance.view;
+    case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:
+        return s_input_spec_radiance.view;
+
+    /* Denoised outputs */
+    case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
+        return s_output_diff_radiance.view;
+    case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:
+        return s_output_spec_radiance.view;
+
+    /* Internal NRD pool textures */
+    case nrd::ResourceType::TRANSIENT_POOL:
+        if (index_in_pool < s_transient_count)
+            return s_transient_pool[index_in_pool].view;
+        Com_EPrintf("[NRD] TRANSIENT_POOL index %u out of range (%u)\n",
+                    index_in_pool, s_transient_count);
+        return VK_NULL_HANDLE;
+    case nrd::ResourceType::PERMANENT_POOL:
+        if (index_in_pool < s_permanent_count)
+            return s_permanent_pool[index_in_pool].view;
+        Com_EPrintf("[NRD] PERMANENT_POOL index %u out of range (%u)\n",
+                    index_in_pool, s_permanent_count);
+        return VK_NULL_HANDLE;
+
+    default:
+        Com_EPrintf("[NRD] Unhandled resource type %u\n", (unsigned)type);
+        return VK_NULL_HANDLE;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 3: NRD dispatch                                              */
+/* ------------------------------------------------------------------ */
+
+extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf)
+{
+    if (!s_initialized || !s_nrd_instance)
+        return VK_SUCCESS;
+
+    const nrd::InstanceDesc *inst = nrd::GetInstanceDesc(*s_nrd_instance);
+    if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
+
+    const nrd::LibraryDesc *lib = nrd::GetLibraryDesc();
+    int frame_idx = qvk.current_frame_index;
+
+    /* --- Transition pool + output textures to GENERAL on first use --- */
+    if (!s_pool_textures_transitioned) {
+        for (uint32_t i = 0; i < s_permanent_count; i++)
+            transition_to_general(cmd_buf, s_permanent_pool[i].image);
+        for (uint32_t i = 0; i < s_transient_count; i++)
+            transition_to_general(cmd_buf, s_transient_pool[i].image);
+        transition_to_general(cmd_buf, s_output_diff_radiance.image);
+        transition_to_general(cmd_buf, s_output_spec_radiance.image);
+        s_pool_textures_transitioned = true;
+    }
+
+    /* --- SetCommonSettings --- */
+    const QVKUniformBuffer_t *ubo = &vkpt_refdef.uniform_buffer;
+
+    nrd::CommonSettings common_settings = {};
+
+    /* Matrices — engine float[16] column-major matches NRD convention */
+    memcpy(common_settings.viewToClipMatrix,     ubo->P,      sizeof(float) * 16);
+    memcpy(common_settings.viewToClipMatrixPrev, ubo->P_prev, sizeof(float) * 16);
+    memcpy(common_settings.worldToViewMatrix,     ubo->V,      sizeof(float) * 16);
+    memcpy(common_settings.worldToViewMatrixPrev, ubo->V_prev, sizeof(float) * 16);
+    /* worldPrevToWorldMatrix: identity (already default-initialized) */
+
+    /* Motion vectors: engine stores UV [0,1] space, NRD wants pixel space */
+    common_settings.motionVectorScale[0] = (float)s_render_width;
+    common_settings.motionVectorScale[1] = (float)s_render_height;
+    common_settings.motionVectorScale[2] = 1.0f;
+    common_settings.isMotionVectorInWorldSpace = false;
+
+    /* Render resolution */
+    common_settings.resourceSize[0]     = s_render_width;
+    common_settings.resourceSize[1]     = s_render_height;
+    common_settings.resourceSizePrev[0] = s_render_width;   /* TODO: handle resize */
+    common_settings.resourceSizePrev[1] = s_render_height;
+    common_settings.rectSize[0]         = s_render_width;
+    common_settings.rectSize[1]         = s_render_height;
+    common_settings.rectSizePrev[0]     = s_render_width;
+    common_settings.rectSizePrev[1]     = s_render_height;
+
+    /* Frame index */
+    common_settings.frameIndex = (uint32_t)(qvk.frame_counter & 0xFFFFFFFF);
+
+    /* Camera jitter [-0.5, +0.5] pixels from TAA/DLSS */
+    common_settings.cameraJitter[0]     = ubo->sub_pixel_jitter[0];
+    common_settings.cameraJitter[1]     = ubo->sub_pixel_jitter[1];
+    common_settings.cameraJitterPrev[0] = s_prev_jitter[0];
+    common_settings.cameraJitterPrev[1] = s_prev_jitter[1];
+    s_prev_jitter[0] = ubo->sub_pixel_jitter[0];
+    s_prev_jitter[1] = ubo->sub_pixel_jitter[1];
+
+    /* Defaults */
+    common_settings.denoisingRange      = 500000.0f;
+    common_settings.disocclusionThreshold = 0.01f;
+    common_settings.accumulationMode    = nrd::AccumulationMode::CONTINUE;
+
+    nrd::Result nrd_result = nrd::SetCommonSettings(*s_nrd_instance, common_settings);
+    if (nrd_result != nrd::Result::SUCCESS) {
+        Com_EPrintf("[NRD] SetCommonSettings failed: %u\n", (unsigned)nrd_result);
+        return VK_ERROR_UNKNOWN;
+    }
+
+    /* --- SetDenoiserSettings (RELAX with NRD defaults) --- */
+    nrd::RelaxSettings relax_settings = {};   /* C++ default member initializers */
+
+    nrd::Identifier denoiser_id = 0;
+    nrd_result = nrd::SetDenoiserSettings(*s_nrd_instance, denoiser_id, &relax_settings);
+    if (nrd_result != nrd::Result::SUCCESS) {
+        Com_EPrintf("[NRD] SetDenoiserSettings failed: %u\n", (unsigned)nrd_result);
+        return VK_ERROR_UNKNOWN;
+    }
+
+    /* --- GetComputeDispatches --- */
+    const nrd::DispatchDesc *dispatch_descs = nullptr;
+    uint32_t dispatch_count = 0;
+
+    nrd_result = nrd::GetComputeDispatches(*s_nrd_instance, &denoiser_id, 1,
+                                           dispatch_descs, dispatch_count);
+    if (nrd_result != nrd::Result::SUCCESS) {
+        Com_EPrintf("[NRD] GetComputeDispatches failed: %u\n", (unsigned)nrd_result);
+        return VK_ERROR_UNKNOWN;
+    }
+
+    if (dispatch_count == 0)
+        return VK_SUCCESS;
+
+    /* Reset NRD descriptor pool — all previous set allocations are freed */
+    vkResetDescriptorPool(qvk.device, s_desc_pool, 0);
+
+    /* Allocate set0 (constant buffer + immutable samplers) — shared by
+     * all dispatches, re-bound with different dynamic offsets.           */
+    VkDescriptorSet set0 = VK_NULL_HANDLE;
+    {
+        VkDescriptorSetAllocateInfo alloc_info = {};
+        alloc_info.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool     = s_desc_pool;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts        = &s_desc_set_layout_cb_samplers;
+
+        VkResult res = vkAllocateDescriptorSets(qvk.device, &alloc_info, &set0);
+        if (res != VK_SUCCESS) {
+            Com_EPrintf("[NRD] Failed to allocate set0: %d\n", res);
+            return res;
+        }
+
+        /* Write CB descriptor — dynamic offset selects per-dispatch data */
+        VkDescriptorBufferInfo buf_info = {};
+        buf_info.buffer = s_constant_buffers[frame_idx].buffer;
+        buf_info.offset = 0;
+        buf_info.range  = inst->constantBufferMaxDataSize;
+
+        VkWriteDescriptorSet write = {};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = set0;
+        write.dstBinding      = lib->spirvBindingOffsets.constantBufferOffset;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        write.pBufferInfo     = &buf_info;
+
+        vkUpdateDescriptorSets(qvk.device, 1, &write, 0, nullptr);
+    }
+
+    /* Get UBO alignment requirement for CB sub-allocation */
+    VkPhysicalDeviceProperties dev_props;
+    vkGetPhysicalDeviceProperties(qvk.physical_device, &dev_props);
+    VkDeviceSize min_align = dev_props.limits.minUniformBufferOffsetAlignment;
+    if (min_align == 0) min_align = 1;
+
+    /* Map constant buffer for per-dispatch data uploads */
+    uint8_t *cb_mapped = nullptr;
+    VkResult map_res = vkMapMemory(qvk.device, s_constant_buffers[frame_idx].memory,
+                                   0, VK_WHOLE_SIZE, 0, (void **)&cb_mapped);
+    if (map_res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to map constant buffer: %d\n", map_res);
+        return map_res;
+    }
+
+    VkDeviceSize cb_offset = 0;
+
+    for (uint32_t d = 0; d < dispatch_count; d++) {
+        const nrd::DispatchDesc &dd = dispatch_descs[d];
+
+        /* --- Constant buffer sub-allocation --- */
+        cb_offset = (cb_offset + min_align - 1) & ~(min_align - 1);
+
+        if (dd.constantBufferDataSize > 0 && dd.constantBufferData &&
+            !dd.constantBufferDataMatchesPreviousDispatch) {
+            memcpy(cb_mapped + cb_offset, dd.constantBufferData,
+                   dd.constantBufferDataSize);
+        }
+
+        /* --- Allocate set1 (per-dispatch resource descriptors) --- */
+        VkDescriptorSet set1 = VK_NULL_HANDLE;
+        {
+            VkDescriptorSetAllocateInfo alloc_info = {};
+            alloc_info.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            alloc_info.descriptorPool     = s_desc_pool;
+            alloc_info.descriptorSetCount = 1;
+            alloc_info.pSetLayouts        = &s_desc_set_layout_resources;
+
+            VkResult alloc_res = vkAllocateDescriptorSets(qvk.device, &alloc_info, &set1);
+            if (alloc_res != VK_SUCCESS) {
+                Com_EPrintf("[NRD] Failed to allocate set1 for dispatch %u (%s): %d\n",
+                            d, dd.name ? dd.name : "?", alloc_res);
+                vkUnmapMemory(qvk.device, s_constant_buffers[frame_idx].memory);
+                return alloc_res;
+            }
+        }
+
+        /* --- Write resource descriptors --- */
+        /* Resources are concatenated in resourceRanges order:
+         * [TEXTURE range descriptors...] [STORAGE_TEXTURE range descriptors...] */
+        const nrd::PipelineDesc &pd = inst->pipelines[dd.pipelineIndex];
+        uint32_t resource_idx = 0;
+
+        for (uint32_t r = 0; r < pd.resourceRangesNum; r++) {
+            const nrd::ResourceRangeDesc &range = pd.resourceRanges[r];
+
+            for (uint32_t j = 0; j < range.descriptorsNum; j++) {
+                if (resource_idx >= dd.resourcesNum) break;
+                const nrd::ResourceDesc &rd = dd.resources[resource_idx];
+
+                VkImageView view = resolve_nrd_image_view(rd.type, rd.indexInPool,
+                                                          rd.descriptorType);
+                if (view == VK_NULL_HANDLE) {
+                    resource_idx++;
+                    continue;
+                }
+
+                VkDescriptorImageInfo img_info = {};
+                img_info.imageView   = view;
+                img_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+                VkWriteDescriptorSet write = {};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = set1;
+                write.descriptorCount = 1;
+                write.pImageInfo      = &img_info;
+
+                if (range.descriptorType == nrd::DescriptorType::TEXTURE) {
+                    write.dstBinding     = lib->spirvBindingOffsets.textureOffset + j;
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                } else {
+                    write.dstBinding     = lib->spirvBindingOffsets.storageTextureAndBufferOffset + j;
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                }
+
+                vkUpdateDescriptorSets(qvk.device, 1, &write, 0, nullptr);
+                resource_idx++;
+            }
+        }
+
+        /* --- Bind pipeline + descriptors and dispatch --- */
+        vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          s_pipelines[dd.pipelineIndex]);
+
+        uint32_t dynamic_offset = (uint32_t)cb_offset;
+        VkDescriptorSet sets[] = { set0, set1 };
+        vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                s_pipeline_layout, 0, 2, sets,
+                                1, &dynamic_offset);
+
+        vkCmdDispatch(cmd_buf, dd.gridWidth, dd.gridHeight, 1);
+
+        /* Advance CB offset past this dispatch's data */
+        if (dd.constantBufferDataSize > 0)
+            cb_offset += dd.constantBufferDataSize;
+
+        /* Full pipeline barrier between dispatches — conservative but correct.
+         * NRD passes may read output of previous pass as input texture.       */
+        VkMemoryBarrier mem_barrier = {};
+        mem_barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mem_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mem_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+        vkCmdPipelineBarrier(cmd_buf,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 1, &mem_barrier, 0, nullptr, 0, nullptr);
+    }
+
+    vkUnmapMemory(qvk.device, s_constant_buffers[frame_idx].memory);
 
     return VK_SUCCESS;
 }
