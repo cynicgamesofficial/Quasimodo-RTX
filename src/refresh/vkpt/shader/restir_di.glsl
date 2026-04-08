@@ -366,8 +366,6 @@ restir_validate_polygon_sample_identity(uint poly_idx, vec3 sample_pos)
 		return false;
 
 	LightPolygon light = get_light_polygon(poly_idx);
-	if(restir_is_sky_polygon_light(light))
-		return false;
 	if(!restir_is_finite_vec3(light.color))
 		return false;
 
@@ -571,8 +569,6 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 			return 0.0;
 
 		LightPolygon light = get_light_polygon(poly_idx);
-		if(restir_is_sky_polygon_light(light))
-			return 0.0;
 
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
 			phong_exp, phong_scale, phong_weight);
@@ -668,8 +664,6 @@ evaluate_restir_target(uint lightData,
 			return 0.0;
 
 		LightPolygon light = get_light_polygon(poly_idx);
-		if(restir_is_sky_polygon_light(light))
-			return 0.0;
 
 		// spherical_tri_area already includes a BRDF-weighted factor
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
