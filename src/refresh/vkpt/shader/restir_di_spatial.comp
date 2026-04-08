@@ -190,14 +190,17 @@ main()
 
 		neighbor.M = min(neighbor.M, RESTIR_M_CAP);
 
-		float targetPdf_n = evaluate_restir_target(neighbor.lightData,
+		vec3 neighbor_sample_pos = imageLoad(IMG_RESTIR_SAMPLE_POS_A, npos).xyz;
+
+		// Use the sampled target variant so sky polygons get directional
+		// env_map luminance instead of the global average (firefly fix).
+		float targetPdf_n = evaluate_restir_target_sampled(neighbor.lightData,
+			neighbor_sample_pos,
 			position, normal_curr, geo_normal, view_dir,
 			phong_exp, phong_scale, phong_weight);
 
 		if(targetPdf_n <= 0.0)
 			continue;
-
-		vec3 neighbor_sample_pos = imageLoad(IMG_RESTIR_SAMPLE_POS_A, npos).xyz;
 
 		float rng = get_rng(uint(RNG_SPATIAL_COMBINE_0 + n));
 		reservoir_combine(current, weightSum, neighbor, targetPdf_n, rng,

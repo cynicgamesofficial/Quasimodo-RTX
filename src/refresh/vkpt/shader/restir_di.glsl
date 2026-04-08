@@ -572,7 +572,20 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
 			phong_exp, phong_scale, phong_weight);
-		float light_lum = restir_get_polygon_target_weight(light);
+
+		float light_lum;
+		if(restir_is_sky_polygon_light(light))
+		{
+			// Use actual directional sky radiance so the target tracks
+			// the shading value.  A global sky_luminance average under-
+			// estimates bright directions (near sun) → huge W → fireflies.
+			vec3 L = normalize(sample_pos - position);
+			light_lum = max(luminance(env_map(L, true)) * global_ubo.pt_env_scale, 1e-7);
+		}
+		else
+		{
+			light_lum = restir_get_polygon_target_weight(light);
+		}
 
 		return area * light_lum;
 	}
