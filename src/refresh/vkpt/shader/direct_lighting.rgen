@@ -381,7 +381,11 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 							float LdotNL = max(0.0, -dot(light_normal, L));
 							float spotlight = sqrt(LdotNL);
 
-							light_color = light.color * (inv_pdfw * spotlight * light.light_style_scale);
+							// Do NOT include inv_pdfw (= solid angle Ω) here.
+							// The reservoir weight W already encodes 1/source_pdf
+							// which includes 1/(pdf_cdf * pdfw).  Multiplying by
+							// inv_pdfw again would double-count the geometric PDF.
+							light_color = light.color * (spotlight * light.light_style_scale);
 
 							if(dot(L, geo_normal) > 0 && luminance(abs(light_color)) > 0)
 								valid_sample = true;
