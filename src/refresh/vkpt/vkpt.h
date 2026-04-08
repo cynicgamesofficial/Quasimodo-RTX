@@ -845,10 +845,10 @@ static inline void begin_perf_marker(VkCommandBuffer command_buffer, int index)
 {
 	_VK(vkpt_profiler_query(command_buffer, index, PROFILER_START));
 
-	const VkDebugUtilsLabelEXT label = {
-		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
-		.pLabelName = perf_marker_labels[index]
-	};
+	VkDebugUtilsLabelEXT label;
+	memset(&label, 0, sizeof(label));
+	label.sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+	label.pLabelName = perf_marker_labels[index];
 
 	if (qvkCmdBeginDebugUtilsLabelEXT != NULL)
 		qvkCmdBeginDebugUtilsLabelEXT(command_buffer, &label);
