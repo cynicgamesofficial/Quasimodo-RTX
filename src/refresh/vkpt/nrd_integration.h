@@ -9,6 +9,7 @@
  *          descriptor sets, constant buffer.
  * Phase 2: Input packing — GBuffers → NRD input format.
  * Phase 3: NRD dispatch — SetCommonSettings → GetComputeDispatches → record.
+ * Phase 4: Output routing — NRD denoised output → composite → ASVGF_COLOR.
  */
 
 #ifndef NRD_INTEGRATION_H
@@ -51,6 +52,12 @@ VkResult vkpt_nrd_pack_inputs(VkCommandBuffer cmd_buf);
  * then records all compute dispatches returned by NRD.
  * Must be called AFTER vkpt_nrd_pack_inputs(). */
 VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf);
+
+/* Composite NRD denoised output with material properties.
+ * Reads NRD denoised diffuse+specular, raw LF (indirect), and GBuffer
+ * materials, writes the composited result to ASVGF_COLOR.
+ * Must be called AFTER vkpt_nrd_dispatch(). */
+VkResult vkpt_nrd_composite(VkCommandBuffer cmd_buf);
 
 #ifdef __cplusplus
 }

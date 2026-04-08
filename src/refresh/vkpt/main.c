@@ -118,6 +118,10 @@ cvar_t *cvar_sli = NULL;
 cvar_t *cvar_dump_image = NULL;
 #endif
 
+#ifdef VKPT_NRD
+cvar_t *cvar_pt_nrd = NULL;
+#endif
+
 byte cluster_debug_mask[VIS_MAX_BYTES];
 int cluster_debug_index;
 
@@ -3886,7 +3890,18 @@ R_RenderFrame_RTX(refdef_t *fd)
 		BEGIN_PERF_MARKER(post_cmd_buf, PROFILER_ASVGF_FULL);
 		if (ref_mode.enable_denoiser)
 		{
-			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f);
+#ifdef VKPT_NRD
+			if (cvar_pt_nrd->integer && vkpt_nrd_is_initialized())
+			{
+				vkpt_nrd_pack_inputs(post_cmd_buf);
+				vkpt_nrd_dispatch(post_cmd_buf);
+				vkpt_nrd_composite(post_cmd_buf);
+			}
+			else
+#endif
+			{
+				vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f);
+			}
 		}
 		else
 		{
@@ -4719,6 +4734,10 @@ R_Init_RTX(bool total)
 	cvar_pt_direct_sun_light->changed = restir_di_cvar_changed;
 
 	cvar_pt_num_bounce_rays->flags |= CVAR_ARCHIVE;
+
+#ifdef VKPT_NRD
+	cvar_pt_nrd = Cvar_Get("pt_nrd", "0", 0);
+#endif
 
 	cvar_ui_hdr_nits = Cvar_Get("ui_hdr_nits", "300", 0);
 

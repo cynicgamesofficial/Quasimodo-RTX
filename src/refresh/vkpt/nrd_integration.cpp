@@ -132,6 +132,16 @@ static bool       s_pool_textures_transitioned = false;
 static float      s_prev_jitter[2] = {0.0f, 0.0f};
 
 /* ------------------------------------------------------------------ */
+/*  Phase 4: NRD composite pipeline state                              */
+/* ------------------------------------------------------------------ */
+
+static VkDescriptorSetLayout s_comp_desc_set_layout = VK_NULL_HANDLE;
+static VkDescriptorPool      s_comp_desc_pool       = VK_NULL_HANDLE;
+static VkDescriptorSet       s_comp_desc_set        = VK_NULL_HANDLE;
+static VkPipelineLayout      s_comp_pipeline_layout  = VK_NULL_HANDLE;
+static VkPipeline            s_comp_pipeline         = VK_NULL_HANDLE;
+
+/* ------------------------------------------------------------------ */
 /*  NRD Format → VkFormat                                              */
 /* ------------------------------------------------------------------ */
 
@@ -840,6 +850,110 @@ static void destroy_output_images(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Phase 4: Composite descriptor set (reads NRD denoised outputs)     */
+/* ------------------------------------------------------------------ */
+
+static bool create_comp_descriptor_resources(void)
+{
+    /* Descriptor set layout: 2 storage images for NRD denoised diff+spec */
+    VkDescriptorSetLayoutBinding bindings[2];
+    memset(bindings, 0, sizeof(bindings));
+    for (int i = 0; i < 2; i++) {
+        bindings[i].binding         = (uint32_t)i;
+        bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {};
+    layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = 2;
+    layout_info.pBindings    = bindings;
+
+    VkResult res = vkCreateDescriptorSetLayout(qvk.device, &layout_info,
+                                               nullptr, &s_comp_desc_set_layout);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to create comp desc set layout: %d\n", res);
+        return false;
+    }
+
+    /* Descriptor pool */
+    VkDescriptorPoolSize pool_size;
+    pool_size.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    pool_size.descriptorCount = 2;
+
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.maxSets       = 1;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes    = &pool_size;
+
+    res = vkCreateDescriptorPool(qvk.device, &pool_info, nullptr, &s_comp_desc_pool);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to create comp desc pool: %d\n", res);
+        return false;
+    }
+
+    /* Allocate descriptor set */
+    VkDescriptorSetAllocateInfo alloc_info = {};
+    alloc_info.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool     = s_comp_desc_pool;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts        = &s_comp_desc_set_layout;
+
+    res = vkAllocateDescriptorSets(qvk.device, &alloc_info, &s_comp_desc_set);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to allocate comp desc set: %d\n", res);
+        return false;
+    }
+
+    Com_Printf("[NRD] Composite descriptor resources created\n");
+    return true;
+}
+
+static void destroy_comp_descriptor_resources(void)
+{
+    s_comp_desc_set = VK_NULL_HANDLE;
+    if (s_comp_desc_pool) {
+        vkDestroyDescriptorPool(qvk.device, s_comp_desc_pool, nullptr);
+        s_comp_desc_pool = VK_NULL_HANDLE;
+    }
+    if (s_comp_desc_set_layout) {
+        vkDestroyDescriptorSetLayout(qvk.device, s_comp_desc_set_layout, nullptr);
+        s_comp_desc_set_layout = VK_NULL_HANDLE;
+    }
+}
+
+/* Write the 2 NRD output image views into the composite descriptor set. */
+static void update_comp_descriptor_set(void)
+{
+    if (!s_comp_desc_set)
+        return;
+
+    VkDescriptorImageInfo img_infos[2];
+    memset(img_infos, 0, sizeof(img_infos));
+
+    img_infos[0].imageView   = s_output_diff_radiance.view;
+    img_infos[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    img_infos[1].imageView   = s_output_spec_radiance.view;
+    img_infos[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet writes[2];
+    memset(writes, 0, sizeof(writes));
+    for (int i = 0; i < 2; i++) {
+        writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet          = s_comp_desc_set;
+        writes[i].dstBinding      = (uint32_t)i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo      = &img_infos[i];
+    }
+
+    vkUpdateDescriptorSets(qvk.device, 2, writes, 0, nullptr);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Phase 2: Packing descriptor set & pipeline                         */
 /* ------------------------------------------------------------------ */
 
@@ -1070,6 +1184,11 @@ extern "C" qboolean vkpt_nrd_init(uint16_t render_width, uint16_t render_height)
     if (!create_output_images(render_width, render_height))
                                        { vkpt_nrd_destroy(); return qfalse; }
 
+    /* --- Phase 4: Composite descriptors --- */
+    if (!create_comp_descriptor_resources())
+                                       { vkpt_nrd_destroy(); return qfalse; }
+    update_comp_descriptor_set();
+
     s_initialized = true;
     Com_Printf("[NRD] Fully initialized (render %ux%u)\n", render_width, render_height);
 
@@ -1079,6 +1198,9 @@ extern "C" qboolean vkpt_nrd_init(uint16_t render_width, uint16_t render_height)
 extern "C" void vkpt_nrd_destroy(void)
 {
     vkDeviceWaitIdle(qvk.device);
+
+    /* Phase 4 teardown */
+    destroy_comp_descriptor_resources();
 
     /* Phase 3 teardown */
     destroy_output_images();
@@ -1143,6 +1265,7 @@ extern "C" qboolean vkpt_nrd_resize(uint16_t render_width, uint16_t render_heigh
         Com_EPrintf("[NRD] resize: failed to recreate output images\n");
         return qfalse;
     }
+    update_comp_descriptor_set();
 
     Com_Printf("[NRD] Resized to %ux%u\n", render_width, render_height);
     return qtrue;
@@ -1197,11 +1320,63 @@ extern "C" VkResult vkpt_nrd_create_pipelines(void)
     }
 
     Com_Printf("[NRD] Pack pipeline created\n");
+
+    /* ---- Composite pipeline (Phase 4) ---- */
+    if (s_comp_desc_set_layout)
+    {
+        VkDescriptorSetLayout comp_layouts[3];
+        comp_layouts[0] = qvk.desc_set_layout_ubo;
+        comp_layouts[1] = qvk.desc_set_layout_textures;
+        comp_layouts[2] = s_comp_desc_set_layout;
+
+        VkPipelineLayoutCreateInfo comp_layout_info = {};
+        comp_layout_info.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        comp_layout_info.setLayoutCount = 3;
+        comp_layout_info.pSetLayouts    = comp_layouts;
+
+        res = vkCreatePipelineLayout(qvk.device, &comp_layout_info, nullptr,
+                                     &s_comp_pipeline_layout);
+        if (res != VK_SUCCESS) {
+            Com_EPrintf("[NRD] Failed to create comp pipeline layout: %d\n", res);
+            return res;
+        }
+
+        VkPipelineShaderStageCreateInfo comp_stage = {};
+        comp_stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        comp_stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+        comp_stage.module = qvk.shader_modules[QVK_MOD_NRD_COMPOSITE_COMP];
+        comp_stage.pName  = "main";
+
+        VkComputePipelineCreateInfo comp_pipe_info = {};
+        comp_pipe_info.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        comp_pipe_info.stage  = comp_stage;
+        comp_pipe_info.layout = s_comp_pipeline_layout;
+
+        res = vkCreateComputePipelines(qvk.device, VK_NULL_HANDLE, 1, &comp_pipe_info,
+                                       nullptr, &s_comp_pipeline);
+        if (res != VK_SUCCESS) {
+            Com_EPrintf("[NRD] Failed to create comp pipeline: %d\n", res);
+            vkDestroyPipelineLayout(qvk.device, s_comp_pipeline_layout, nullptr);
+            s_comp_pipeline_layout = VK_NULL_HANDLE;
+            return res;
+        }
+
+        Com_Printf("[NRD] Composite pipeline created\n");
+    }
+
     return VK_SUCCESS;
 }
 
 extern "C" VkResult vkpt_nrd_destroy_pipelines(void)
 {
+    if (s_comp_pipeline) {
+        vkDestroyPipeline(qvk.device, s_comp_pipeline, nullptr);
+        s_comp_pipeline = VK_NULL_HANDLE;
+    }
+    if (s_comp_pipeline_layout) {
+        vkDestroyPipelineLayout(qvk.device, s_comp_pipeline_layout, nullptr);
+        s_comp_pipeline_layout = VK_NULL_HANDLE;
+    }
     if (s_pack_pipeline) {
         vkDestroyPipeline(qvk.device, s_pack_pipeline, nullptr);
         s_pack_pipeline = VK_NULL_HANDLE;
@@ -1566,6 +1741,46 @@ extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf)
     }
 
     vkUnmapMemory(qvk.device, s_constant_buffers[frame_idx].memory);
+
+    return VK_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 4: Composite dispatch (NRD outputs → ASVGF_COLOR)            */
+/* ------------------------------------------------------------------ */
+
+extern "C" VkResult vkpt_nrd_composite(VkCommandBuffer cmd_buf)
+{
+    if (!s_initialized || !s_comp_pipeline || !s_comp_desc_set)
+        return VK_SUCCESS;
+
+    /* Bind composite pipeline */
+    vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, s_comp_pipeline);
+
+    /* Bind descriptor sets: set0=UBO, set1=textures, set2=NRD outputs */
+    VkDescriptorSet desc_sets[3];
+    desc_sets[0] = qvk.desc_set_ubo;
+    desc_sets[1] = qvk_get_current_desc_set_textures();
+    desc_sets[2] = s_comp_desc_set;
+
+    vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
+        s_comp_pipeline_layout, 0, 3, desc_sets, 0, nullptr);
+
+    /* Dispatch: 16x16 workgroups over the render resolution */
+    uint32_t gx = (qvk.gpu_slice_width + 15) / 16;
+    uint32_t gy = (qvk.extent_render.height + 15) / 16;
+    vkCmdDispatch(cmd_buf, gx, gy, 1);
+
+    /* Barrier: composite wrote IMG_ASVGF_COLOR, next pass (interleave) reads it */
+    VkMemoryBarrier mem_barrier = {};
+    mem_barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mem_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mem_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(cmd_buf,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &mem_barrier, 0, nullptr, 0, nullptr);
 
     return VK_SUCCESS;
 }

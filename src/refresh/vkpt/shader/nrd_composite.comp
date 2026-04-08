@@ -1,0 +1,68 @@
+/*
+ * NRD compositing shader.
+ *
+ * Reads NRD-denoised diffuse and specular radiance from the output images,
+ * combines them with raw indirect diffuse (LF via SH) and material
+ * properties using the engine's standard composite_color() formula,
+ * and writes the result to IMG_ASVGF_COLOR so the rest of the pipeline
+ * (checkerboard interleave, TAAU/DLSS, bloom, tonemap) can proceed
+ * identically to the ASVGF path.
+ */
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+#include "utils.glsl"
+#include "brdf.glsl"
+
+/* Set 2: NRD denoised outputs (read-only storage images) */
+layout(set = 2, binding = 0, rgba16f) uniform readonly image2D nrd_diff_result;
+layout(set = 2, binding = 1, rgba16f) uniform readonly image2D nrd_spec_result;
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID);
+	if (any(greaterThanEqual(ipos, ivec2(global_ubo.current_gpu_slice_width, global_ubo.height))))
+		return;
+
+	/* NRD denoised radiance — already in linear space, no storage scale */
+	vec3 high_freq = imageLoad(nrd_diff_result, ipos).rgb;
+	vec3 specular  = imageLoad(nrd_spec_result, ipos).rgb;
+
+	/* Raw indirect diffuse (LF) — still noisy but low-frequency.
+	 * Load as SH and project onto surface normal for directional accuracy. */
+	SH lf_sh;
+	lf_sh.shY  = texelFetch(TEX_PT_COLOR_LF_SH, ipos, 0);
+	lf_sh.CoCg = texelFetch(TEX_PT_COLOR_LF_COCG, ipos, 0).xy;
+	lf_sh.shY  /= STORAGE_SCALE_LF;
+	lf_sh.CoCg /= STORAGE_SCALE_LF;
+
+	vec3 normal = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+	vec3 projected_lf = project_SH_irradiance(lf_sh, normal);
+
+	/* Material properties */
+	vec3  base_color = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0).rgb;
+	float metallic   = texelFetch(TEX_PT_METALLIC_A, ipos, 0).x;
+	vec3  throughput  = texelFetch(TEX_PT_THROUGHPUT, ipos, 0).rgb;
+	vec4  transparent = texelFetch(TEX_PT_TRANSPARENT, ipos, 0);
+
+	float checkerboard_flags = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).w;
+
+	/* Composite using the same formula as compositing.comp / asvgf_atrous.comp */
+	vec3 final_color = composite_color(base_color, metallic, throughput,
+	                                   projected_lf, high_freq, specular, transparent);
+
+	final_color *= STORAGE_SCALE_HDR;
+
+	imageStore(IMG_ASVGF_COLOR, ipos, vec4(final_color, checkerboard_flags));
+}
