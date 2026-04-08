@@ -291,6 +291,11 @@ IF(WIN32)
 	SET(SRC_VKPT_STREAMLINE
 		refresh/vkpt/streamline_reflex.cpp
 	)
+	IF(TARGET NRD)
+		SET(SRC_VKPT_NRD
+			refresh/vkpt/nrd_integration.cpp
+		)
+	ENDIF()
 ENDIF()
 
 SET(HEADERS_VKPT
@@ -305,6 +310,7 @@ SET(HEADERS_VKPT
 	refresh/vkpt/precomputed_sky.h
 	refresh/vkpt/conversion.h
 	refresh/vkpt/streamline_reflex.h
+	refresh/vkpt/nrd_integration.h
 )
 
 set(SRC_SHADERS
@@ -563,6 +569,16 @@ IF (TARGET client)
             ELSE()
                 MESSAGE(STATUS "Streamline SDK not found at ${STREAMLINE_ROOT} - Reflex disabled at compile time")
             ENDIF()
+        ENDIF()
+
+        # NRD (NVIDIA Real-Time Denoisers) — optional, requires NRD_ROOT
+        IF(TARGET NRD)
+            TARGET_SOURCES(client PRIVATE ${SRC_VKPT_NRD})
+            TARGET_LINK_LIBRARIES(client NRD)
+            TARGET_COMPILE_DEFINITIONS(client PRIVATE VKPT_NRD=1)
+            MESSAGE(STATUS "NRD: enabled for client target")
+        ELSE()
+            MESSAGE(STATUS "NRD: disabled (NRD target not found)")
         ENDIF()
     ENDIF()
 

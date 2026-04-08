@@ -147,3 +147,42 @@ if (IS_64_BIT)
         target_compile_definitions(OpenAL PUBLIC AL_LIBTYPE_STATIC)
     endif()
 endif()
+
+#
+# NRD (NVIDIA Real-Time Denoisers)
+#
+
+if(IS_64_BIT AND NRD_ROOT AND EXISTS "${NRD_ROOT}/CMakeLists.txt")
+    message(STATUS "NRD: building from ${NRD_ROOT}")
+
+    # Build NRD as a static library with SPIR-V shaders only
+    set(NRD_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
+    set(NRD_NRI OFF CACHE BOOL "" FORCE)
+    set(NRD_EMBEDS_SPIRV_SHADERS ON CACHE BOOL "" FORCE)
+    set(NRD_EMBEDS_DXIL_SHADERS OFF CACHE BOOL "" FORCE)
+    set(NRD_EMBEDS_DXBC_SHADERS OFF CACHE BOOL "" FORCE)
+    set(NRD_NORMAL_ENCODING "2" CACHE STRING "" FORCE)
+    set(NRD_ROUGHNESS_ENCODING "1" CACHE STRING "" FORCE)
+
+    add_subdirectory("${NRD_ROOT}" "${CMAKE_BINARY_DIR}/extern/NRD")
+
+    set_target_properties(NRD PROPERTIES FOLDER extern/NRD)
+    if(TARGET NRDShaders)
+        set_target_properties(NRDShaders PROPERTIES FOLDER extern/NRD)
+    endif()
+    if(TARGET MathLib)
+        set_target_properties(MathLib PROPERTIES FOLDER extern/NRD)
+    endif()
+    if(TARGET ShaderMake)
+        set_target_properties(ShaderMake PROPERTIES FOLDER extern/NRD)
+    endif()
+    if(TARGET ShaderMakeBlob)
+        set_target_properties(ShaderMakeBlob PROPERTIES FOLDER extern/NRD)
+    endif()
+else()
+    if(IS_64_BIT AND NRD_ROOT)
+        message(WARNING "NRD: CMakeLists.txt not found at ${NRD_ROOT}")
+    elseif(IS_64_BIT)
+        message(STATUS "NRD: NRD_ROOT not set - NRD denoiser disabled")
+    endif()
+endif()

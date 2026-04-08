@@ -38,6 +38,9 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "physical_sky.h"
 #include "conversion.h"
 #include "streamline_reflex.h"
+#ifdef VKPT_NRD
+#include "nrd_integration.h"
+#endif
 #include "../../client/client.h"
 #include "../../client/ui/ui.h"
 
@@ -4757,6 +4760,10 @@ R_Init_RTX(bool total)
 	vkpt_fog_init();
 	vkpt_cameras_init();
 
+#ifdef VKPT_NRD
+	vkpt_nrd_init((uint16_t)qvk.extent_render.width, (uint16_t)qvk.extent_render.height);
+#endif
+
 	for (int i = 0; i < 256; i++) {
 		qvk.sintab[i] = sinf(i * (2 * M_PI / 255));
 	}
@@ -4801,6 +4808,10 @@ R_Shutdown_RTX(bool total)
 
 	_VK(vkpt_destroy_all(VKPT_INIT_DEFAULT));
 	vkpt_destroy_shader_modules();
+
+#ifdef VKPT_NRD
+	vkpt_nrd_destroy();
+#endif
 
 #ifdef _WIN32
 	SLReflex_Shutdown();

@@ -8,6 +8,7 @@ set(Q2RTX_VERSION_MAJOR 1)
 set(Q2RTX_VERSION_MINOR 8)
 set(Q2RTX_VERSION_POINT 1)
 set(STREAMLINE_ROOT "${PROJECT_SOURCE_DIR}/Third Parties/NVIDIA" CACHE PATH "Streamline SDK root")
+set(NRD_ROOT "" CACHE PATH "NRD SDK source root (e.g. D:/quasifix/NRD-4.17.2)")
 
 # get short-hash
 execute_process(
