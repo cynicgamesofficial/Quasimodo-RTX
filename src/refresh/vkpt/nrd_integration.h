@@ -7,6 +7,7 @@
  * Phase 0: scaffolding — create/destroy NRD instance.
  * Phase 1: Vulkan resource creation — pipelines, textures, samplers,
  *          descriptor sets, constant buffer.
+ * Phase 2: Input packing — GBuffers → NRD input format.
  */
 
 #ifndef NRD_INTEGRATION_H
@@ -31,9 +32,18 @@ void     vkpt_nrd_destroy(void);
 /* Returns qtrue when the NRD instance is live and ready for use. */
 qboolean vkpt_nrd_is_initialized(void);
 
-/* Recreate resolution-dependent resources (pool textures) after a
- * render resolution change.  Pipelines / samplers are NOT recreated. */
+/* Recreate resolution-dependent resources (pool textures, input images)
+ * after a render resolution change.  Pipelines / samplers are NOT recreated. */
 qboolean vkpt_nrd_resize(uint16_t render_width, uint16_t render_height);
+
+/* Create / destroy the packing compute pipeline (call during shader reload). */
+VkResult vkpt_nrd_create_pipelines(void);
+VkResult vkpt_nrd_destroy_pipelines(void);
+
+/* Record the input-packing compute dispatch into cmd_buf.
+ * Reads engine GBuffers, writes NRD-formatted input images.
+ * Must be called AFTER path tracing and BEFORE NRD dispatch. */
+VkResult vkpt_nrd_pack_inputs(VkCommandBuffer cmd_buf);
 
 #ifdef __cplusplus
 }

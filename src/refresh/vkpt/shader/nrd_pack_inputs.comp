@@ -1,0 +1,140 @@
+/*
+ * NRD input packing shader.
+ *
+ * Reads engine GBuffers (PT_NORMAL_A, PT_METALLIC_A, PT_COLOR_HF,
+ * PT_COLOR_SPEC, PT_SPEC_HIT_DIST_A) and writes NRD RELAX inputs
+ * in the formats NRD expects:
+ *
+ *   NRD_IN_NORMAL_ROUGHNESS      — R10G10B10A2_UNORM (stored as r32ui)
+ *   NRD_IN_DIFF_RADIANCE_HITDIST — RGBA16F
+ *   NRD_IN_SPEC_RADIANCE_HITDIST — RGBA16F
+ *
+ * IN_MV and IN_VIEWZ are passed through from engine images directly
+ * (no conversion needed).
+ */
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+#include "constants.h"
+
+/* NRD output images on descriptor set 2 */
+layout(set = 2, binding = 0, r32ui)   uniform writeonly uimage2D IMG_NRD_NORMAL_ROUGHNESS;
+layout(set = 2, binding = 1, rgba16f) uniform writeonly image2D  IMG_NRD_DIFF_RADIANCE_HITDIST;
+layout(set = 2, binding = 2, rgba16f) uniform writeonly image2D  IMG_NRD_SPEC_RADIANCE_HITDIST;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+/* ------------------------------------------------------------------ */
+/*  Engine normal decoding (octahedron from R32_UINT)                  */
+/* ------------------------------------------------------------------ */
+
+vec3 engine_decode_normal(uint enc)
+{
+    uvec2 u = uvec2(enc & 0xffffu, enc >> 16);
+    vec2 p = vec2(u) / float(0xffff);
+    p = p * 2.0 - 1.0;
+
+    vec3 n = vec3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));
+    float t = max(0.0, -n.z);
+    n.x += (n.x >= 0.0) ? -t : t;
+    n.y += (n.y >= 0.0) ? -t : t;
+
+    return normalize(n);
+}
+
+/* ------------------------------------------------------------------ */
+/*  NRD normal+roughness packing (R10G10B10A2_UNORM bit layout)        */
+/*                                                                     */
+/*  Matches NRD_FrontEnd_PackNormalAndRoughness() with                  */
+/*  NRD_NORMAL_ENCODING = NRD_NORMAL_ENCODING_R10_G10_B10_A2_UNORM     */
+/* ------------------------------------------------------------------ */
+
+uint nrd_pack_normal_roughness(vec3 N, float roughness, float materialID)
+{
+    /* Project onto octahedron */
+    N /= (abs(N.x) + abs(N.y) + abs(N.z));
+
+    /* Improved octahedron mapping (matches NRD.hlsli) */
+    vec2 oct;
+    oct.y = N.y * 0.5 + 0.5;
+    oct.x = N.x * 0.5 + oct.y;
+    oct.y -= N.x * 0.5;
+
+    /* Roughness + Z-sign packed into Z channel:
+       bit 7 = sign(N.z) >= 0, bits 6:0 = roughness as 7-bit uint */
+    uint convergentRoughness = uint(clamp(roughness * 256.0, 1.5, 255.0));
+    if (N.z >= 0.0)
+        convergentRoughness |= 128u;
+    float z = float(convergentRoughness) / 255.0;
+
+    /* Material ID in alpha (2-bit UNORM: materialID / 3) */
+    float w = clamp(materialID / 3.0, 0.0, 1.0);
+
+    /* Quantise to R10G10B10A2 bit layout */
+    uint r = uint(clamp(oct.x, 0.0, 1.0) * 1023.0 + 0.5);
+    uint g = uint(clamp(oct.y, 0.0, 1.0) * 1023.0 + 0.5);
+    uint b = uint(clamp(z,     0.0, 1.0) * 1023.0 + 0.5);
+    uint a = uint(clamp(w,     0.0, 1.0) *    3.0 + 0.5);
+
+    return r | (g << 10) | (b << 20) | (a << 30);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Engine RGBE unpacking (9-bit mantissa × 3, 5-bit exponent)         */
+/* ------------------------------------------------------------------ */
+
+vec3 unpack_rgbe(uint packed)
+{
+    uvec3 mantissa = uvec3(
+        packed         & 511u,
+        (packed >>  9) & 511u,
+        (packed >> 18) & 511u);
+    uint exponent = packed >> 27;
+    float scale = exp2(float(exponent) - 20.0) / 256.0;
+    return vec3(mantissa) * scale;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main                                                               */
+/* ------------------------------------------------------------------ */
+
+void main()
+{
+    ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = ivec2(global_ubo.current_gpu_slice_width, global_ubo.height);
+
+    if (ipos.x >= size.x || ipos.y >= size.y)
+        return;
+
+    /* --- Normal + Roughness --- */
+    uint packed_normal = imageLoad(IMG_PT_NORMAL_A, ipos).x;
+    vec3 normal = engine_decode_normal(packed_normal);
+
+    vec2 metallic_roughness = imageLoad(IMG_PT_METALLIC_A, ipos).xy;
+    float roughness = metallic_roughness.y;
+
+    uint packed_nr = nrd_pack_normal_roughness(normal, roughness, 0.0);
+    imageStore(IMG_NRD_NORMAL_ROUGHNESS, ipos, uvec4(packed_nr));
+
+    /* --- Diffuse radiance + hit distance --- */
+    uint packed_hf = imageLoad(IMG_PT_COLOR_HF, ipos).x;
+    vec3 diff_radiance = unpack_rgbe(packed_hf) / STORAGE_SCALE_HF;
+    /* Hit distance for primary diffuse not available yet; use 0.
+       RELAX tolerates this — hit distance improves quality but isn't required. */
+    float diff_hitdist = 0.0;
+    imageStore(IMG_NRD_DIFF_RADIANCE_HITDIST, ipos, vec4(diff_radiance, diff_hitdist));
+
+    /* --- Specular radiance + hit distance --- */
+    uint packed_spec = imageLoad(IMG_PT_COLOR_SPEC, ipos).x;
+    vec3 spec_radiance = unpack_rgbe(packed_spec) / STORAGE_SCALE_SPEC;
+    float spec_hitdist = imageLoad(IMG_PT_SPEC_HIT_DIST_A, ipos).x;
+    imageStore(IMG_NRD_SPEC_RADIANCE_HITDIST, ipos, vec4(spec_radiance, spec_hitdist));
+}

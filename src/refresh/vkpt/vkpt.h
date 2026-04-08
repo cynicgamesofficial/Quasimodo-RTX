@@ -106,6 +106,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_INITIAL_COMP)                \
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_TEMPORAL_COMP)               \
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_SPATIAL_COMP)                \
+	SHADER_MODULE_DO(QVK_MOD_NRD_PACK_INPUTS_COMP)                  \
 
 #define LIST_RT_RGEN_SHADER_MODULES \
 	SHADER_MODULE_DO(QVK_MOD_PRIMARY_RAYS_RGEN)                      \

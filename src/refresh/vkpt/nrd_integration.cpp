@@ -4,6 +4,8 @@
  * Phase 0: scaffolding — create/destroy NRD instance.
  * Phase 1: Vulkan resource creation — pipelines, pool textures, samplers,
  *          descriptor sets, constant buffer.  No dispatching yet.
+ * Phase 2: Input packing — compute shader converts engine GBuffers into
+ *          NRD-formatted input images (normal+roughness, radiance+hitdist).
  */
 
 #include "NRD.h"
@@ -32,6 +34,13 @@ static bool      create_descriptor_resources(void);
 static void      destroy_descriptor_resources(void);
 static bool      create_constant_buffer(void);
 static void      destroy_constant_buffer(void);
+
+/* Phase 2: input packing */
+static bool      create_input_images(uint16_t render_width, uint16_t render_height);
+static void      destroy_input_images(void);
+static bool      create_pack_descriptor_resources(void);
+static void      destroy_pack_descriptor_resources(void);
+static void      update_pack_descriptor_set(void);
 
 /* ------------------------------------------------------------------ */
 /*  Per-texture bookkeeping                                            */
@@ -84,6 +93,25 @@ static BufferResource_t s_constant_buffers[MAX_FRAMES_IN_FLIGHT];
 /* Render dimensions for pool texture sizing */
 static uint16_t s_render_width  = 0;
 static uint16_t s_render_height = 0;
+
+/* ------------------------------------------------------------------ */
+/*  Phase 2: NRD input images                                          */
+/* ------------------------------------------------------------------ */
+
+/* NRD input images that need format conversion from engine GBuffers.
+ * IN_MV and IN_VIEWZ are aliased directly from engine images. */
+static NrdTexture s_input_normal_roughness    = {};  /* R32_UINT (written as packed R10G10B10A2) */
+static VkImageView s_input_normal_roughness_unorm_view = VK_NULL_HANDLE; /* A2B10G10R10_UNORM view */
+static NrdTexture s_input_diff_radiance       = {};  /* RGBA16F  */
+static NrdTexture s_input_spec_radiance       = {};  /* RGBA16F  */
+
+/* Packing pipeline (engine compute shader that converts GBuffers → NRD) */
+static VkDescriptorSetLayout s_pack_desc_set_layout = VK_NULL_HANDLE;
+static VkDescriptorPool      s_pack_desc_pool       = VK_NULL_HANDLE;
+static VkDescriptorSet       s_pack_desc_set        = VK_NULL_HANDLE;
+static VkPipelineLayout      s_pack_pipeline_layout  = VK_NULL_HANDLE;
+static VkPipeline            s_pack_pipeline         = VK_NULL_HANDLE;
+static bool                  s_input_images_transitioned = false;
 
 /* ------------------------------------------------------------------ */
 /*  NRD Format → VkFormat                                              */
@@ -621,6 +649,303 @@ static void destroy_constant_buffer(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Phase 2: NRD input images                                          */
+/* ------------------------------------------------------------------ */
+
+/* Variant of create_single_texture that sets MUTABLE_FORMAT_BIT and
+   creates a second VkImageView with an alternate format for sampling. */
+static bool create_mutable_texture(NrdTexture *tex, VkFormat storage_fmt,
+                                   VkFormat sampled_fmt, VkImageView *out_sampled_view,
+                                   uint32_t width, uint32_t height, const char *label)
+{
+    tex->format = storage_fmt;
+    tex->width  = width;
+    tex->height = height;
+
+    VkFormat view_formats[2];
+    view_formats[0] = storage_fmt;
+    view_formats[1] = sampled_fmt;
+
+    VkImageFormatListCreateInfo fmt_list = {};
+    fmt_list.sType           = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+    fmt_list.viewFormatCount = 2;
+    fmt_list.pViewFormats    = view_formats;
+
+    VkImageCreateInfo img_info = {};
+    img_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    img_info.pNext         = &fmt_list;
+    img_info.flags         = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    img_info.imageType     = VK_IMAGE_TYPE_2D;
+    img_info.format        = storage_fmt;
+    img_info.extent.width  = width;
+    img_info.extent.height = height;
+    img_info.extent.depth  = 1;
+    img_info.mipLevels     = 1;
+    img_info.arrayLayers   = 1;
+    img_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+    img_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    img_info.usage         = VK_IMAGE_USAGE_STORAGE_BIT
+                           | VK_IMAGE_USAGE_SAMPLED_BIT
+                           | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    img_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkResult res = vkCreateImage(qvk.device, &img_info, nullptr, &tex->image);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] vkCreateImage failed for %s: %d\n", label, res);
+        return false;
+    }
+
+    VkMemoryRequirements mem_req;
+    vkGetImageMemoryRequirements(qvk.device, tex->image, &mem_req);
+    res = allocate_gpu_memory(mem_req, &tex->memory);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] allocate_gpu_memory failed for %s: %d\n", label, res);
+        vkDestroyImage(qvk.device, tex->image, nullptr);
+        tex->image = VK_NULL_HANDLE;
+        return false;
+    }
+    vkBindImageMemory(qvk.device, tex->image, tex->memory, 0);
+
+    /* Storage-format view (for imageStore in packing shader) */
+    VkImageViewCreateInfo view_info = {};
+    view_info.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image                           = tex->image;
+    view_info.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format                          = storage_fmt;
+    view_info.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    view_info.subresourceRange.baseMipLevel   = 0;
+    view_info.subresourceRange.levelCount     = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount     = 1;
+
+    res = vkCreateImageView(qvk.device, &view_info, nullptr, &tex->view);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] vkCreateImageView (storage) failed for %s: %d\n", label, res);
+        destroy_single_texture(tex);
+        return false;
+    }
+
+    /* Sampled-format view (for NRD's texture2D reads) */
+    view_info.format = sampled_fmt;
+    res = vkCreateImageView(qvk.device, &view_info, nullptr, out_sampled_view);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] vkCreateImageView (sampled) failed for %s: %d\n", label, res);
+        destroy_single_texture(tex);
+        return false;
+    }
+
+    return true;
+}
+
+static bool create_input_images(uint16_t render_width, uint16_t render_height)
+{
+    /* Normal+Roughness: R32_UINT for storage writes, A2B10G10R10_UNORM for NRD reads */
+    if (!create_mutable_texture(&s_input_normal_roughness,
+                                VK_FORMAT_R32_UINT,
+                                VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+                                &s_input_normal_roughness_unorm_view,
+                                render_width, render_height,
+                                "NRD_IN_NORMAL_ROUGHNESS")) {
+        return false;
+    }
+
+    /* Diffuse radiance + hit distance: RGBA16F */
+    if (!create_single_texture(&s_input_diff_radiance,
+                               VK_FORMAT_R16G16B16A16_SFLOAT,
+                               render_width, render_height,
+                               "NRD_IN_DIFF_RADIANCE_HITDIST")) {
+        destroy_input_images();
+        return false;
+    }
+
+    /* Specular radiance + hit distance: RGBA16F */
+    if (!create_single_texture(&s_input_spec_radiance,
+                               VK_FORMAT_R16G16B16A16_SFLOAT,
+                               render_width, render_height,
+                               "NRD_IN_SPEC_RADIANCE_HITDIST")) {
+        destroy_input_images();
+        return false;
+    }
+
+    Com_Printf("[NRD] Created 3 input images (%ux%u)\n", render_width, render_height);
+    return true;
+}
+
+static void destroy_input_images(void)
+{
+    if (s_input_normal_roughness_unorm_view) {
+        vkDestroyImageView(qvk.device, s_input_normal_roughness_unorm_view, nullptr);
+        s_input_normal_roughness_unorm_view = VK_NULL_HANDLE;
+    }
+    destroy_single_texture(&s_input_normal_roughness);
+    destroy_single_texture(&s_input_diff_radiance);
+    destroy_single_texture(&s_input_spec_radiance);
+    s_input_images_transitioned = false;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 2: Packing descriptor set & pipeline                         */
+/* ------------------------------------------------------------------ */
+
+static bool create_pack_descriptor_resources(void)
+{
+    /* Descriptor set layout: 3 storage images for NRD outputs */
+    VkDescriptorSetLayoutBinding bindings[3];
+    memset(bindings, 0, sizeof(bindings));
+    for (int i = 0; i < 3; i++) {
+        bindings[i].binding         = (uint32_t)i;
+        bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {};
+    layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = 3;
+    layout_info.pBindings    = bindings;
+
+    VkResult res = vkCreateDescriptorSetLayout(qvk.device, &layout_info,
+                                               nullptr, &s_pack_desc_set_layout);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to create pack desc set layout: %d\n", res);
+        return false;
+    }
+
+    /* Descriptor pool */
+    VkDescriptorPoolSize pool_size;
+    pool_size.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    pool_size.descriptorCount = 3;
+
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.maxSets       = 1;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes    = &pool_size;
+
+    res = vkCreateDescriptorPool(qvk.device, &pool_info, nullptr, &s_pack_desc_pool);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to create pack desc pool: %d\n", res);
+        destroy_pack_descriptor_resources();
+        return false;
+    }
+
+    /* Allocate descriptor set */
+    VkDescriptorSetAllocateInfo alloc_info = {};
+    alloc_info.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool     = s_pack_desc_pool;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts        = &s_pack_desc_set_layout;
+
+    res = vkAllocateDescriptorSets(qvk.device, &alloc_info, &s_pack_desc_set);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to allocate pack desc set: %d\n", res);
+        destroy_pack_descriptor_resources();
+        return false;
+    }
+
+    Com_Printf("[NRD] Pack descriptor resources created\n");
+    return true;
+}
+
+static void destroy_pack_descriptor_resources(void)
+{
+    /* Descriptor set freed implicitly by pool destruction */
+    s_pack_desc_set = VK_NULL_HANDLE;
+
+    if (s_pack_desc_pool) {
+        vkDestroyDescriptorPool(qvk.device, s_pack_desc_pool, nullptr);
+        s_pack_desc_pool = VK_NULL_HANDLE;
+    }
+    if (s_pack_desc_set_layout) {
+        vkDestroyDescriptorSetLayout(qvk.device, s_pack_desc_set_layout, nullptr);
+        s_pack_desc_set_layout = VK_NULL_HANDLE;
+    }
+}
+
+/* Write the 3 NRD storage image views into the packing descriptor set. */
+static void update_pack_descriptor_set(void)
+{
+    if (!s_pack_desc_set)
+        return;
+
+    VkDescriptorImageInfo img_infos[3];
+    memset(img_infos, 0, sizeof(img_infos));
+
+    img_infos[0].imageView   = s_input_normal_roughness.view; /* R32_UINT storage view */
+    img_infos[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    img_infos[1].imageView   = s_input_diff_radiance.view;
+    img_infos[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    img_infos[2].imageView   = s_input_spec_radiance.view;
+    img_infos[2].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet writes[3];
+    memset(writes, 0, sizeof(writes));
+    for (int i = 0; i < 3; i++) {
+        writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet          = s_pack_desc_set;
+        writes[i].dstBinding      = (uint32_t)i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo      = &img_infos[i];
+    }
+
+    vkUpdateDescriptorSets(qvk.device, 3, writes, 0, nullptr);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 2: Image barriers (C++ compatible, no designated inits)      */
+/* ------------------------------------------------------------------ */
+
+static void barrier_compute_write(VkCommandBuffer cmd_buf, VkImage image)
+{
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout                       = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image                           = image;
+    barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel   = 0;
+    barrier.subresourceRange.levelCount     = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount     = 1;
+
+    vkCmdPipelineBarrier(cmd_buf,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+static void transition_to_general(VkCommandBuffer cmd_buf, VkImage image)
+{
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask                   = 0;
+    barrier.dstAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.oldLayout                       = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image                           = image;
+    barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel   = 0;
+    barrier.subresourceRange.levelCount     = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount     = 1;
+
+    vkCmdPipelineBarrier(cmd_buf,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public API (C linkage)                                             */
 /* ------------------------------------------------------------------ */
 
@@ -679,6 +1004,13 @@ extern "C" qboolean vkpt_nrd_init(uint16_t render_width, uint16_t render_height)
                                        { vkpt_nrd_destroy(); return qfalse; }
     if (!create_constant_buffer())     { vkpt_nrd_destroy(); return qfalse; }
 
+    /* --- Phase 2: Input images + packing descriptors --- */
+    if (!create_input_images(render_width, render_height))
+                                       { vkpt_nrd_destroy(); return qfalse; }
+    if (!create_pack_descriptor_resources())
+                                       { vkpt_nrd_destroy(); return qfalse; }
+    update_pack_descriptor_set();
+
     s_initialized = true;
     Com_Printf("[NRD] Fully initialized (render %ux%u)\n", render_width, render_height);
 
@@ -689,6 +1021,12 @@ extern "C" void vkpt_nrd_destroy(void)
 {
     vkDeviceWaitIdle(qvk.device);
 
+    /* Phase 2 teardown */
+    vkpt_nrd_destroy_pipelines();
+    destroy_pack_descriptor_resources();
+    destroy_input_images();
+
+    /* Phase 1 teardown */
     destroy_constant_buffer();
     destroy_pool_textures();
     destroy_pipelines();
@@ -722,6 +1060,7 @@ extern "C" qboolean vkpt_nrd_resize(uint16_t render_width, uint16_t render_heigh
     vkDeviceWaitIdle(qvk.device);
 
     destroy_pool_textures();
+    destroy_input_images();
 
     s_render_width  = render_width;
     s_render_height = render_height;
@@ -731,6 +1070,119 @@ extern "C" qboolean vkpt_nrd_resize(uint16_t render_width, uint16_t render_heigh
         return qfalse;
     }
 
-    Com_Printf("[NRD] Resized pool textures to %ux%u\n", render_width, render_height);
+    if (!create_input_images(render_width, render_height)) {
+        Com_EPrintf("[NRD] resize: failed to recreate input images\n");
+        return qfalse;
+    }
+    update_pack_descriptor_set();
+
+    Com_Printf("[NRD] Resized to %ux%u\n", render_width, render_height);
     return qtrue;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 2: Packing pipeline create / destroy (shader-reload safe)    */
+/* ------------------------------------------------------------------ */
+
+extern "C" VkResult vkpt_nrd_create_pipelines(void)
+{
+    if (!s_initialized || !s_pack_desc_set_layout)
+        return VK_SUCCESS; /* silently skip if NRD not initialised */
+
+    /* Pipeline layout: set0 = engine UBO, set1 = engine textures, set2 = NRD outputs */
+    VkDescriptorSetLayout set_layouts[3];
+    set_layouts[0] = qvk.desc_set_layout_ubo;
+    set_layouts[1] = qvk.desc_set_layout_textures;
+    set_layouts[2] = s_pack_desc_set_layout;
+
+    VkPipelineLayoutCreateInfo layout_info = {};
+    layout_info.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = 3;
+    layout_info.pSetLayouts    = set_layouts;
+
+    VkResult res = vkCreatePipelineLayout(qvk.device, &layout_info, nullptr,
+                                          &s_pack_pipeline_layout);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to create pack pipeline layout: %d\n", res);
+        return res;
+    }
+
+    /* Compute pipeline using engine shader QVK_MOD_NRD_PACK_INPUTS_COMP */
+    VkPipelineShaderStageCreateInfo stage = {};
+    stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = qvk.shader_modules[QVK_MOD_NRD_PACK_INPUTS_COMP];
+    stage.pName  = "main";
+
+    VkComputePipelineCreateInfo pipe_info = {};
+    pipe_info.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipe_info.stage  = stage;
+    pipe_info.layout = s_pack_pipeline_layout;
+
+    res = vkCreateComputePipelines(qvk.device, VK_NULL_HANDLE, 1, &pipe_info,
+                                   nullptr, &s_pack_pipeline);
+    if (res != VK_SUCCESS) {
+        Com_EPrintf("[NRD] Failed to create pack compute pipeline: %d\n", res);
+        vkDestroyPipelineLayout(qvk.device, s_pack_pipeline_layout, nullptr);
+        s_pack_pipeline_layout = VK_NULL_HANDLE;
+        return res;
+    }
+
+    Com_Printf("[NRD] Pack pipeline created\n");
+    return VK_SUCCESS;
+}
+
+extern "C" VkResult vkpt_nrd_destroy_pipelines(void)
+{
+    if (s_pack_pipeline) {
+        vkDestroyPipeline(qvk.device, s_pack_pipeline, nullptr);
+        s_pack_pipeline = VK_NULL_HANDLE;
+    }
+    if (s_pack_pipeline_layout) {
+        vkDestroyPipelineLayout(qvk.device, s_pack_pipeline_layout, nullptr);
+        s_pack_pipeline_layout = VK_NULL_HANDLE;
+    }
+    return VK_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 2: Input packing dispatch                                    */
+/* ------------------------------------------------------------------ */
+
+extern "C" VkResult vkpt_nrd_pack_inputs(VkCommandBuffer cmd_buf)
+{
+    if (!s_initialized || !s_pack_pipeline)
+        return VK_SUCCESS;
+
+    /* Transition NRD input images to GENERAL on first use */
+    if (!s_input_images_transitioned) {
+        transition_to_general(cmd_buf, s_input_normal_roughness.image);
+        transition_to_general(cmd_buf, s_input_diff_radiance.image);
+        transition_to_general(cmd_buf, s_input_spec_radiance.image);
+        s_input_images_transitioned = true;
+    }
+
+    /* Bind pipeline */
+    vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, s_pack_pipeline);
+
+    /* Bind descriptor sets: set0=UBO, set1=textures, set2=NRD outputs */
+    VkDescriptorSet desc_sets[3];
+    desc_sets[0] = qvk.desc_set_ubo;
+    desc_sets[1] = qvk_get_current_desc_set_textures();
+    desc_sets[2] = s_pack_desc_set;
+
+    vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
+        s_pack_pipeline_layout, 0, 3, desc_sets, 0, nullptr);
+
+    /* Dispatch: 16x16 workgroups over the render resolution */
+    uint32_t gx = (qvk.gpu_slice_width + 15) / 16;
+    uint32_t gy = (qvk.extent_render.height + 15) / 16;
+    vkCmdDispatch(cmd_buf, gx, gy, 1);
+
+    /* Barriers on all 3 NRD output images */
+    barrier_compute_write(cmd_buf, s_input_normal_roughness.image);
+    barrier_compute_write(cmd_buf, s_input_diff_radiance.image);
+    barrier_compute_write(cmd_buf, s_input_spec_radiance.image);
+
+    return VK_SUCCESS;
 }
