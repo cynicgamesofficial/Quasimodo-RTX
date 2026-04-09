@@ -4719,7 +4719,7 @@ R_Init_RTX(bool total)
 	cvar_pt_waterwarp = Cvar_Get("pt_waterwarp", "0", CVAR_ARCHIVE);
 
 	// DLSS Super Resolution (phase 1)
-	cvar_pt_dlss = Cvar_Get("pt_dlss", "0", CVAR_ARCHIVE);
+	cvar_pt_dlss = Cvar_Get("pt_dlss", "1", CVAR_ARCHIVE);
 	cvar_pt_dlss_quality = Cvar_Get("pt_dlss_quality", "0", CVAR_ARCHIVE);
 	cvar_pt_dlss->changed = dlss_cvar_changed;
 	cvar_pt_dlss_quality->changed = dlss_cvar_changed;
@@ -4794,7 +4794,7 @@ R_Init_RTX(bool total)
 	cvar_pt_num_bounce_rays->flags |= CVAR_ARCHIVE;
 
 #ifdef VKPT_NRD
-	cvar_pt_nrd = Cvar_Get("pt_nrd", "0", 0);
+cvar_pt_nrd = Cvar_Get("pt_nrd", "1", 0);
 #endif
 
 	cvar_ui_hdr_nits = Cvar_Get("ui_hdr_nits", "300", 0);
