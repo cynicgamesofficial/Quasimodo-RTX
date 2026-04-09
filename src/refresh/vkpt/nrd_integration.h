@@ -50,8 +50,9 @@ VkResult vkpt_nrd_pack_inputs(VkCommandBuffer cmd_buf);
 /* Record NRD denoiser dispatches into cmd_buf.
  * Fills CommonSettings from engine UBO, sets RELAX denoiser defaults,
  * then records all compute dispatches returned by NRD.
- * Must be called AFTER vkpt_nrd_pack_inputs(). */
-VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf);
+ * Must be called AFTER vkpt_nrd_pack_inputs().
+ * Set reset_history to true on teleport / scene change / first frame. */
+VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf, qboolean reset_history);
 
 /* Composite NRD denoised output with material properties.
  * Reads NRD denoised diffuse+specular, raw LF (indirect), and GBuffer

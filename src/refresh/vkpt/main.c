@@ -3894,7 +3894,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 			if (cvar_pt_nrd->integer && vkpt_nrd_is_initialized())
 			{
 				vkpt_nrd_pack_inputs(post_cmd_buf);
-				vkpt_nrd_dispatch(post_cmd_buf);
+				vkpt_nrd_dispatch(post_cmd_buf, !temporal_frame_valid);
 				vkpt_nrd_composite(post_cmd_buf);
 			}
 			else

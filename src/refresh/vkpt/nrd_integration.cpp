@@ -51,6 +51,20 @@ static VkImageView resolve_nrd_image_view(nrd::ResourceType type, uint16_t index
                                           nrd::DescriptorType desc_type);
 
 /* ------------------------------------------------------------------ */
+/*  NRD tuning cvars                                                   */
+/* ------------------------------------------------------------------ */
+
+extern "C" {
+    extern cvar_t *cvar_pt_nrd;    /* declared in main.c */
+}
+
+static cvar_t *cvar_nrd_max_diff_frames     = nullptr;
+static cvar_t *cvar_nrd_max_spec_frames     = nullptr;
+static cvar_t *cvar_nrd_disocclusion        = nullptr;
+static cvar_t *cvar_nrd_phi_luminance_diff  = nullptr;
+static cvar_t *cvar_nrd_phi_luminance_spec  = nullptr;
+
+/* ------------------------------------------------------------------ */
 /*  Per-texture bookkeeping                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1123,6 +1137,13 @@ extern "C" qboolean vkpt_nrd_init(uint16_t render_width, uint16_t render_height)
     if (s_initialized)
         return qtrue;
 
+    /* Register tuning cvars (Cvar_Get is idempotent) */
+    cvar_nrd_max_diff_frames    = Cvar_Get("nrd_max_diff_frames",    "30",   0);
+    cvar_nrd_max_spec_frames    = Cvar_Get("nrd_max_spec_frames",    "30",   0);
+    cvar_nrd_disocclusion       = Cvar_Get("nrd_disocclusion",       "0.01", 0);
+    cvar_nrd_phi_luminance_diff = Cvar_Get("nrd_phi_luminance_diff", "2.0",  0);
+    cvar_nrd_phi_luminance_spec = Cvar_Get("nrd_phi_luminance_spec", "1.0",  0);
+
     /* --- Phase 0: NRD instance creation --- */
     const nrd::LibraryDesc *lib = nrd::GetLibraryDesc();
     if (!lib) {
@@ -1489,7 +1510,7 @@ static VkImageView resolve_nrd_image_view(nrd::ResourceType type,
 /*  Phase 3: NRD dispatch                                              */
 /* ------------------------------------------------------------------ */
 
-extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf)
+extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf, qboolean reset_history)
 {
     if (!s_initialized || !s_nrd_instance)
         return VK_SUCCESS;
@@ -1523,10 +1544,11 @@ extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf)
     memcpy(common_settings.worldToViewMatrixPrev, ubo->V_prev, sizeof(float) * 16);
     /* worldPrevToWorldMatrix: identity (already default-initialized) */
 
-    /* Motion vectors: engine stores UV [0,1] space, NRD wants pixel space */
+    /* Motion vectors: engine stores backward UV [0,1] → NRD pixel space.
+     * Z = 0 because motion is 2.5D screen-space (isMotionVectorInWorldSpace=false). */
     common_settings.motionVectorScale[0] = (float)s_render_width;
     common_settings.motionVectorScale[1] = (float)s_render_height;
-    common_settings.motionVectorScale[2] = 1.0f;
+    common_settings.motionVectorScale[2] = 0.0f;
     common_settings.isMotionVectorInWorldSpace = false;
 
     /* Render resolution */
@@ -1552,8 +1574,11 @@ extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf)
 
     /* Defaults */
     common_settings.denoisingRange      = 500000.0f;
-    common_settings.disocclusionThreshold = 0.01f;
-    common_settings.accumulationMode    = nrd::AccumulationMode::CONTINUE;
+    common_settings.disocclusionThreshold = cvar_nrd_disocclusion
+        ? cvar_nrd_disocclusion->value : 0.01f;
+    common_settings.accumulationMode    = reset_history
+        ? nrd::AccumulationMode::CLEAR_AND_RESTART
+        : nrd::AccumulationMode::CONTINUE;
 
     nrd::Result nrd_result = nrd::SetCommonSettings(*s_nrd_instance, common_settings);
     if (nrd_result != nrd::Result::SUCCESS) {
@@ -1561,8 +1586,26 @@ extern "C" VkResult vkpt_nrd_dispatch(VkCommandBuffer cmd_buf)
         return VK_ERROR_UNKNOWN;
     }
 
-    /* --- SetDenoiserSettings (RELAX with NRD defaults) --- */
+    /* --- SetDenoiserSettings (RELAX) --- */
     nrd::RelaxSettings relax_settings = {};   /* C++ default member initializers */
+
+    /* Diffuse hit distance is unavailable (set to 0 in pack shader),
+     * so enable NRD's 3x3 hit distance reconstruction to compensate. */
+    relax_settings.hitDistanceReconstructionMode =
+        nrd::HitDistanceReconstructionMode::AREA_3X3;
+
+    /* Suppress fireflies from unbiased path tracing */
+    relax_settings.enableAntiFirefly = true;
+
+    /* Apply runtime-tunable cvars */
+    if (cvar_nrd_max_diff_frames)
+        relax_settings.diffuseMaxAccumulatedFrameNum = (uint32_t)cvar_nrd_max_diff_frames->integer;
+    if (cvar_nrd_max_spec_frames)
+        relax_settings.specularMaxAccumulatedFrameNum = (uint32_t)cvar_nrd_max_spec_frames->integer;
+    if (cvar_nrd_phi_luminance_diff)
+        relax_settings.diffusePhiLuminance = cvar_nrd_phi_luminance_diff->value;
+    if (cvar_nrd_phi_luminance_spec)
+        relax_settings.specularPhiLuminance = cvar_nrd_phi_luminance_spec->value;
 
     nrd::Identifier denoiser_id = 0;
     nrd_result = nrd::SetDenoiserSettings(*s_nrd_instance, denoiser_id, &relax_settings);
