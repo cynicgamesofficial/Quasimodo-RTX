@@ -782,7 +782,7 @@ main()
 	imageStore(IMG_PT_CLUSTER_A, ipos, uvec4(cluster_idx));
 	imageStore(IMG_PT_BASE_COLOR_A, ipos, vec4(primary_base_color, primary_specular_factor));
 	imageStore(IMG_PT_METALLIC_A, ipos, vec4(primary_metallic, primary_roughness, 0, 0));
-	// Use the accumulated optical path length as a narrow specular-stability guide
-	// for the temporal filter. Primary surfaces keep this at 0 in primary_rays.rgen.
-	imageStore(IMG_PT_SPEC_HIT_DIST_A, ipos, vec4(optical_path_length));
+	// Water/slime warp makes the optical path length unstable frame-to-frame, so
+	// keep the legacy disabled guide there and preserve the new guide elsewhere.
+	imageStore(IMG_PT_SPEC_HIT_DIST_A, ipos, vec4((primary_is_water || primary_is_slime) ? 0.0 : optical_path_length));
 }

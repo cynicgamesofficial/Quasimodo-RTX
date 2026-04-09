@@ -356,12 +356,11 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 					if(pdfw > 0.0)
 					{
 						vec3 L = normalize(pos_on_light - position);
+						float inv_pdfw = 1.0 / pdfw;
 
 						if(restir_is_sky_polygon_light(light))
 						{
-							// No inv_pdfw: the reservoir weight W already
-							// encodes 1/source_pdf which includes 1/(pdf_cdf*pdfw).
-							light_color = env_map(L, true) * global_ubo.pt_env_scale;
+							light_color = env_map(L, true) * (inv_pdfw * global_ubo.pt_env_scale);
 
 							if(dot(L, geo_normal) > 0 && luminance(abs(light_color)) > 0)
 							{
@@ -450,8 +449,61 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 			direct_specular);
 	}
 
-	// Sky polygon lighting now flows through the reservoir like all
-	// other polygon lights, so no separate sky illumination call needed.
+	// Dynamic lights (particles, explosions, muzzle flashes) are evaluated via
+	// the legacy single-sample estimator when ReSTIR is active.  They lack stable
+	// indices across frames (add_dlights rebuilds from scratch each frame), so
+	// temporal/spatial reuse in the reservoir corrupts their weights.
+	if(global_ubo.pt_restir_di != 0
+		&& global_ubo.pt_direct_dyn_lights > 0
+		&& global_ubo.num_dyn_lights > 0)
+	{
+		vec3 pos_on_dyn;
+		vec3 dyn_color;
+
+		vec3 rng_dyn = vec3(
+			get_rng(RNG_NEE_LIGHT_SELECTION(0)),
+			get_rng(RNG_NEE_TRI_X(0)),
+			get_rng(RNG_NEE_TRI_Y(0)));
+
+		sample_dynamic_lights(
+			position, normal, geo_normal,
+			2.0 * M_PI,
+			pos_on_dyn, dyn_color, rng_dyn);
+
+		if(luminance(dyn_color) > 0 && dot(pos_on_dyn - position, geo_normal) > 0)
+		{
+			vec3 L_dyn = normalize(pos_on_dyn - position);
+			Ray shadow_ray = get_shadow_ray(position - view_direction.xyz * 0.01, pos_on_dyn, 0);
+			float vis = trace_shadow_ray(shadow_ray, shadow_cull_mask);
+
+#ifdef ENABLE_SHADOW_CAUSTICS
+			if(spec_enable_caustics != 0)
+				dyn_color *= trace_caustic_ray(shadow_ray, primary_medium);
+#endif
+
+			vec3 dyn_radiance = vis * dyn_color;
+
+			vec3 F_dyn = vec3(0);
+			if(vis > 0 && direct_specular_weight > 0)
+			{
+				vec3 spec_brdf = GGX_times_NdotL(view_direction.xyz, L_dyn,
+					normal, primary_roughness, primary_base_reflectivity,
+					0.0, primary_specular_factor, F_dyn);
+				direct_specular += dyn_radiance * spec_brdf * direct_specular_weight;
+			}
+
+			float NdotL_dyn = max(0.0, dot(normal, L_dyn));
+			direct_diffuse += dyn_radiance * (NdotL_dyn / M_PI) * (vec3(1.0) - F_dyn);
+		}
+	}
+
+	// When ReSTIR DI is active, sky polygons are excluded from the reservoir
+	// (the CDF sampler may pick them, but !is_sky rejects them in initial.comp).
+	// Sky illumination through windows is captured by indirect lighting bounces
+	// instead.  The previous separate get_visible_sky_polygon_illumination() call
+	// was a single-sample legacy estimator whose high variance mixed with the
+	// low-variance reservoir signal, causing firefly flicker in dark areas lit
+	// by sky/sun.  Removing it eliminates that mixed-variance artifact.
 
     high_freq += direct_diffuse;
     o_specular += direct_specular;

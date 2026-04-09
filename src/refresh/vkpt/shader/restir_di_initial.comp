@@ -175,7 +175,7 @@ main()
 			is_gradient,
 			pos_on_light, light_color, poly_light_index, pdfw, is_sky, rng);
 
-		if(poly_light_index >= 0 && pdfw > 0)
+		if(poly_light_index >= 0 && pdfw > 0 && !is_sky)
 		{
 			uint lightData = restir_encode_polygon_light(uint(poly_light_index));
 
@@ -186,39 +186,21 @@ main()
 
 			if(target_pdf > 0.0)
 			{
-				float ris_weight = 0.0;
+				// Derive ris_weight = target_pdf / source_pdf.
+				// sample_polygonal_lights returns:
+				//   light_color = emission * (1/pdfw) * spotlight * style / pdf_cdf
+				// so source_pdf = pdf_cdf * pdfw
+				//               = lum(|emission|) * spotlight * style / lum(|light_color|)
+				LightPolygon lp = get_light_polygon(poly_light_index);
+				vec3  L  = normalize(pos_on_light - position);
+				vec3  e1 = lp.positions[1] - lp.positions[0];
+				vec3  e2 = lp.positions[2] - lp.positions[0];
+				float spotlight = sqrt(max(0.0, -dot(normalize(cross(e1, e2)), L)));
 
-				if(is_sky)
-				{
-					// Sky polygon: sample_polygonal_lights returns
-					//   light_color = env_map(L) * (1/pdfw) * env_scale / pdf_cdf
-					// Source pdf = pdf_cdf * pdfw.  We recover it as:
-					//   pdf_cdf / (1/pdfw) = lum(env_map) * env_scale / lum(light_color)
-					//   source_pdf = pdf_cdf * pdfw = lum(env_map) * env_scale / lum(light_color)
-					vec3  L     = normalize(pos_on_light - position);
-					float envLum = luminance(env_map(L, true));
-					float denom = envLum * global_ubo.pt_env_scale;
-					ris_weight = (denom > 1e-10)
-						? target_pdf * luminance(abs(light_color)) / denom
-						: 0.0;
-				}
-				else
-				{
-					// Non-sky polygon: sample_polygonal_lights returns
-					//   light_color = emission * (1/pdfw) * spotlight * style / pdf_cdf
-					// so source_pdf = pdf_cdf * pdfw
-					//               = lum(|emission|) * spotlight * style / lum(|light_color|)
-					LightPolygon lp = get_light_polygon(poly_light_index);
-					vec3  L  = normalize(pos_on_light - position);
-					vec3  e1 = lp.positions[1] - lp.positions[0];
-					vec3  e2 = lp.positions[2] - lp.positions[0];
-					float spotlight = sqrt(max(0.0, -dot(normalize(cross(e1, e2)), L)));
-
-					float denom = luminance(abs(lp.color)) * spotlight * lp.light_style_scale;
-					ris_weight = (denom > 1e-10)
-						? target_pdf * luminance(abs(light_color)) / denom
-						: 0.0;
-				}
+				float denom = luminance(abs(lp.color)) * spotlight * lp.light_style_scale;
+				float ris_weight = (denom > 1e-10)
+					? target_pdf * luminance(abs(light_color)) / denom
+					: 0.0;
 
 				if(ris_weight > 0.0)
 					reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
@@ -227,44 +209,11 @@ main()
 		}
 	}
 
-	// ---- Candidate 2: dynamic light (uniform selection) ---- //
-	if(global_ubo.pt_direct_dyn_lights > 0 && global_ubo.num_dyn_lights > 0)
-	{
-		vec3 pos_on_light;
-		vec3 light_color;
-
-		vec3 rng = vec3(
-			get_rng(RNG_RESTIR_DYN_SEL),
-			get_rng(RNG_RESTIR_DYN_X),
-			get_rng(RNG_RESTIR_DYN_Y));
-
-		sample_dynamic_lights(
-			position, normal, geo_normal,
-			2.0 * M_PI,
-			pos_on_light, light_color, rng);
-
-		if(luminance(light_color) > 0)
-		{
-			// Reconstruct selected index -- same arithmetic as sample_dynamic_lights
-			uint dyn_idx = min(uint(global_ubo.num_dyn_lights) - 1u,
-				uint(rng.x * float(global_ubo.num_dyn_lights)));
-			uint lightData = restir_encode_dynamic_light(dyn_idx);
-
-			// Pure target function -- same definition used by temporal re-evaluation.
-			float target_pdf = evaluate_restir_target_sampled(lightData, pos_on_light,
-				position, normal, geo_normal, view_dir,
-				phong_exp, phong_scale, phong_weight);
-
-			if(target_pdf > 0.0)
-			{
-				// source_pdf(dynamic) = 1 / num_dyn_lights
-				float ris_weight = target_pdf * float(global_ubo.num_dyn_lights);
-
-				reservoir_insert(r, weightSum, lightData, target_pdf, ris_weight,
-					get_rng(RNG_RESTIR_INSERT_1), pos_on_light, stored_sample_pos);
-			}
-		}
-	}
+	// Dynamic lights are NOT included in the reservoir.
+	// They lack stable indices across frames (add_dlights rebuilds from scratch),
+	// so temporal/spatial reuse corrupts their weights.  Instead, dynamic lights
+	// are evaluated via the legacy single-sample estimator in direct_lighting.rgen,
+	// matching vanilla Q2RTX's signal that ASVGF was tuned for.
 
 	// Visible sun remains on the legacy get_sunlight() path. Reusing the sampled
 	// sun-disk shadow direction through the local-light reservoir was diverging
