@@ -1,0 +1,63 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+#include "utils.glsl"
+
+vec4 pack_nrd_normal_roughness(vec3 normal, float roughness)
+{
+	float max_abs = max(abs(normal.x), max(abs(normal.y), abs(normal.z)));
+	if (max_abs > 0.0)
+		normal /= max_abs;
+
+	return vec4(normal, clamp(roughness, 0.0, 1.0));
+}
+
+void main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+	if (ipos.x >= global_ubo.current_gpu_slice_width || ipos.y >= global_ubo.height)
+		return;
+
+	float view_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	uint packed_normal = texelFetch(TEX_PT_NORMAL_A, ipos, 0).x;
+	vec2 metallic_roughness = texelFetch(TEX_PT_METALLIC_A, ipos, 0).rg;
+	float spec_hit_dist = texelFetch(TEX_PT_SPEC_HIT_DIST_A, ipos, 0).x;
+	int checkerboard_flags = int(texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).w);
+
+	bool has_surface = abs(view_depth) < (PRIMARY_RAY_T_MAX * 0.5);
+	bool is_checkerboarded_surface = bitCount(checkerboard_flags & CHECKERBOARD_FLAG_FIELD_MASK) > 1;
+	bool is_secondary_surface = view_depth < 0.0 || is_checkerboarded_surface;
+
+	vec3 normal = has_surface ? decode_normal(packed_normal) : vec3(0.0, 0.0, 1.0);
+	float roughness = has_surface ? metallic_roughness.y : 1.0;
+
+	vec3 diffuse = has_surface ? unpackRGBE(texelFetch(TEX_PT_COLOR_HF, ipos, 0).x) / STORAGE_SCALE_HF : vec3(0.0);
+	vec3 specular = has_surface ? unpackRGBE(texelFetch(TEX_PT_COLOR_SPEC, ipos, 0).x) / STORAGE_SCALE_SPEC : vec3(0.0);
+
+	vec2 filtered_gradients = clamp(texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, ipos / GRAD_DWN, 0).rg, vec2(0.0), vec2(1.0));
+	vec2 confidence = has_surface ? clamp(vec2(1.0) - filtered_gradients, vec2(0.0), vec2(1.0)) : vec2(0.0);
+
+	float disocclusion_mix = 0.0;
+	if (has_surface && is_secondary_surface)
+	{
+		disocclusion_mix = 0.5;
+		if (is_checkerboarded_surface)
+			disocclusion_mix = 0.75;
+	}
+
+	imageStore(IMG_NRD_NORMAL_ROUGHNESS, ipos, pack_nrd_normal_roughness(normal, roughness));
+	imageStore(IMG_NRD_DIFF_RADIANCE_HITDIST, ipos, vec4(max(diffuse, vec3(0.0)), 0.0));
+	imageStore(IMG_NRD_SPEC_RADIANCE_HITDIST, ipos, vec4(max(specular, vec3(0.0)), max(spec_hit_dist, 0.0)));
+	imageStore(IMG_NRD_DIFF_CONFIDENCE, ipos, vec4(confidence.x));
+	imageStore(IMG_NRD_SPEC_CONFIDENCE, ipos, vec4(confidence.y));
+	imageStore(IMG_NRD_DISOCCLUSION_MIX, ipos, vec4(disocclusion_mix));
+}

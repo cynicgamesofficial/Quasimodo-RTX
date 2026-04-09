@@ -15,7 +15,24 @@ if (-not (Test-Path $buildDir)) {
 
 Push-Location $root
 try {
-    & cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    $cmakeArgs = @(
+        "-S", ".",
+        "-B", "build",
+        "-G", "Visual Studio 17 2022",
+        "-A", "x64",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    )
+
+    # NRD SDK source root -- required for VKPT_NRD=1
+    $nrdRoot = "D:/quasifix/NRD-4.17.2"
+    if (Test-Path (Join-Path $nrdRoot "CMakeLists.txt")) {
+        $cmakeArgs += "-DNRD_ROOT=$nrdRoot"
+        Write-DevLog "NRD: using source root $nrdRoot"
+    } else {
+        Write-DevLog "NRD: source root not found at $nrdRoot -- NRD will be disabled" "WARN"
+    }
+
+    & cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { exit 1 }
     Write-DevLog "Configuration complete. Build with: .\dev.ps1 build"
 } finally { Pop-Location }

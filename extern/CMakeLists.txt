@@ -155,18 +155,36 @@ endif()
 if(IS_64_BIT AND NRD_ROOT AND EXISTS "${NRD_ROOT}/CMakeLists.txt")
     message(STATUS "NRD: building from ${NRD_ROOT}")
 
-    # Build NRD as a static library with SPIR-V shaders only
+    # Point NRI FetchContent to our local copy so no download is needed
+    set(FETCHCONTENT_SOURCE_DIR_NRI "${CMAKE_SOURCE_DIR}/Third Parties/NRD/NRI" CACHE PATH "" FORCE)
+
+    # Build NRD as a static library with SPIR-V shaders, NRI enabled
     set(NRD_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
-    set(NRD_NRI OFF CACHE BOOL "" FORCE)
+    set(NRD_NRI ON CACHE BOOL "" FORCE)
     set(NRD_EMBEDS_SPIRV_SHADERS ON CACHE BOOL "" FORCE)
     set(NRD_EMBEDS_DXIL_SHADERS OFF CACHE BOOL "" FORCE)
     set(NRD_EMBEDS_DXBC_SHADERS OFF CACHE BOOL "" FORCE)
-    set(NRD_NORMAL_ENCODING "2" CACHE STRING "" FORCE)
+    set(NRD_NORMAL_ENCODING "4" CACHE STRING "" FORCE)
     set(NRD_ROUGHNESS_ENCODING "1" CACHE STRING "" FORCE)
+
+    # NRI options — only Vulkan needed
+    set(NRI_ENABLE_VK_SUPPORT ON CACHE BOOL "" FORCE)
+    set(NRI_ENABLE_D3D11_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(NRI_ENABLE_D3D12_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(NRI_ENABLE_NONE_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(NRI_ENABLE_NVTX_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(NRI_ENABLE_VALIDATION_SUPPORT ON CACHE BOOL "" FORCE)
+    set(NRI_STATIC_LIBRARY OFF CACHE BOOL "" FORCE)
 
     add_subdirectory("${NRD_ROOT}" "${CMAKE_BINARY_DIR}/extern/NRD")
 
     set_target_properties(NRD PROPERTIES FOLDER extern/NRD)
+    if(TARGET NRDIntegration)
+        set_target_properties(NRDIntegration PROPERTIES FOLDER extern/NRD)
+    endif()
+    if(TARGET NRI)
+        set_target_properties(NRI PROPERTIES FOLDER extern/NRD)
+    endif()
     if(TARGET NRDShaders)
         set_target_properties(NRDShaders PROPERTIES FOLDER extern/NRD)
     endif()

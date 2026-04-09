@@ -293,6 +293,7 @@ IF(WIN32)
 	)
 	IF(TARGET NRD)
 		SET(SRC_VKPT_NRD
+			refresh/vkpt/nrd.c
 			refresh/vkpt/nrd_integration.cpp
 		)
 	ENDIF()
@@ -334,8 +335,8 @@ set(SRC_SHADERS
 	refresh/vkpt/shader/restir_di_initial.comp
 	refresh/vkpt/shader/restir_di_temporal.comp
 	refresh/vkpt/shader/restir_di_spatial.comp
-	refresh/vkpt/shader/nrd_pack_inputs.comp
-	refresh/vkpt/shader/nrd_composite.comp
+	refresh/vkpt/shader/nrd_prepare.comp
+	refresh/vkpt/shader/nrd_merge.comp
 	refresh/vkpt/shader/tone_mapping_histogram.comp
 	refresh/vkpt/shader/tone_mapping_curve.comp
     refresh/vkpt/shader/tone_mapping_apply.comp
@@ -576,9 +577,22 @@ IF (TARGET client)
         # NRD (NVIDIA Real-Time Denoisers) — optional, requires NRD_ROOT
         IF(TARGET NRD)
             TARGET_SOURCES(client PRIVATE ${SRC_VKPT_NRD})
-            TARGET_LINK_LIBRARIES(client NRD)
+            TARGET_LINK_LIBRARIES(client NRD NRDIntegration NRI)
+            TARGET_INCLUDE_DIRECTORIES(client PRIVATE
+                "${CMAKE_SOURCE_DIR}/Third Parties/NRD/Integration"
+                "${CMAKE_SOURCE_DIR}/Third Parties/NRD/NRI/Include")
             TARGET_COMPILE_DEFINITIONS(client PRIVATE VKPT_NRD=1)
             MESSAGE(STATUS "NRD: enabled for client target")
+
+            # Copy NRI.dll next to executable at build time
+            IF(WIN32 AND TARGET NRI)
+                ADD_CUSTOM_COMMAND(TARGET client POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:NRI>"
+                        "$<TARGET_FILE_DIR:client>/NRI.dll"
+                    COMMENT "Copying NRI.dll next to executable"
+                )
+            ENDIF()
         ELSE()
             MESSAGE(STATUS "NRD: disabled (NRD target not found)")
         ENDIF()
