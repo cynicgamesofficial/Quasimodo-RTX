@@ -120,6 +120,8 @@ cvar_t *cvar_dump_image = NULL;
 
 #ifdef VKPT_NRD
 cvar_t *cvar_pt_nrd = NULL;
+static bool nrd_reset_pending = true;
+static int  nrd_prev_enabled  = 0;
 #endif
 
 byte cluster_debug_mask[VIS_MAX_BYTES];
@@ -258,6 +260,7 @@ VkptInit_t vkpt_initialization[] = {
 	{ "restir",   vkpt_restir_di_initialize,            vkpt_restir_di_destroy,               VKPT_INIT_DEFAULT,            0 },
 	{ "restir|",  vkpt_restir_di_create_pipelines,      vkpt_restir_di_destroy_pipelines,     VKPT_INIT_RELOAD_SHADER,      0 },
 #ifdef VKPT_NRD
+	{ "nrd",      vkpt_nrd_initialize,                  vkpt_nrd_destroy,                     VKPT_INIT_DEFAULT,            0 },
 	{ "nrd|",     vkpt_nrd_create_pipelines,            vkpt_nrd_destroy_pipelines,           VKPT_INIT_RELOAD_SHADER,      0 },
 #endif
 	{ "bloom",    vkpt_bloom_initialize,               vkpt_bloom_destroy,                   VKPT_INIT_DEFAULT,            0 },
@@ -937,7 +940,10 @@ static const char *optional_instance_extension_name[NUM_OPTIONAL_INSTANCE_EXTENS
 	VK_OPT_EXT_DO(VK_KHR_LINE_RASTERIZATION)		\
 	VK_OPT_EXT_DO(VK_KHR_SHADER_NON_SEMANTIC_INFO)	\
 	VK_OPT_EXT_DO(VK_EXT_DEBUG_MARKER)				\
-	VK_OPT_EXT_DO(VK_NV_LOW_LATENCY)
+	VK_OPT_EXT_DO(VK_NV_LOW_LATENCY)				\
+	VK_OPT_EXT_DO(VK_KHR_DYNAMIC_RENDERING)		\
+	VK_OPT_EXT_DO(VK_KHR_SYNCHRONIZATION_2)		\
+	VK_OPT_EXT_DO(VK_EXT_EXTENDED_DYNAMIC_STATE)
 
 enum optional_device_extension_id
 {
@@ -1510,6 +1516,11 @@ init_vulkan(void)
 	LIST_EXTENSIONS_INSTANCE
 #undef VK_EXTENSION_DO
 
+	/* Save instance extension list for NRI */
+	qvk.num_enabled_instance_extensions = num_inst_ext_combined;
+	qvk.enabled_instance_extensions = malloc(sizeof(char*) * num_inst_ext_combined);
+	memcpy((void*)qvk.enabled_instance_extensions, ext, sizeof(char*) * num_inst_ext_combined);
+
 	/* setup debug callback */
 	VkDebugUtilsMessengerCreateInfoEXT dbg_create_info = {
 		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -1793,9 +1804,14 @@ init_vulkan(void)
 		qvk.supports_fp16 = device_features_1_2.shaderFloat16 && features_16bit_storage.storageBuffer16BitAccess;
 		qvk.supports_debug_lines = device_features.features.fillModeNonSolid && device_features.features.wideLines;
 		qvk.supports_smooth_lines = qvk.supports_debug_lines && device_features_lines.smoothLines;
+		qvk.supports_nrd =
+			available_optional_device_extensions[OPT_EXT_VK_KHR_DYNAMIC_RENDERING] &&
+			available_optional_device_extensions[OPT_EXT_VK_KHR_SYNCHRONIZATION_2] &&
+			available_optional_device_extensions[OPT_EXT_VK_EXT_EXTENDED_DYNAMIC_STATE];
 	}
 	Com_Printf("FP16 support: %s\n", qvk.supports_fp16 ? "yes" : "no");
 	Com_Printf("Debug lines support: %s%s\n", qvk.supports_debug_lines ? "yes" : "no", qvk.supports_smooth_lines ? " (smooth)" : "");
+	Com_Printf("NRD wrapper support: %s\n", qvk.supports_nrd ? "yes" : "no");
 
 	vkGetPhysicalDeviceMemoryProperties(qvk.physical_device, &qvk.mem_properties);
 
@@ -2032,6 +2048,31 @@ init_vulkan(void)
 		device_features.pNext = &line_rast_feat;
 	}
 
+	VkPhysicalDeviceDynamicRenderingFeaturesKHR nrd_dynamic_rendering = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
+		.dynamicRendering = qvk.supports_nrd ? VK_TRUE : VK_FALSE,
+	};
+	VkPhysicalDeviceSynchronization2FeaturesKHR nrd_synchronization2 = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+		.synchronization2 = qvk.supports_nrd ? VK_TRUE : VK_FALSE,
+	};
+	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT nrd_extended_dynamic_state = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+		.extendedDynamicState = qvk.supports_nrd ? VK_TRUE : VK_FALSE,
+	};
+	if (qvk.supports_nrd)
+	{
+		nrd_extended_dynamic_state.pNext = device_features.pNext;
+		nrd_synchronization2.pNext = &nrd_extended_dynamic_state;
+		nrd_dynamic_rendering.pNext = &nrd_synchronization2;
+		device_features.pNext = &nrd_dynamic_rendering;
+	}
+
+	/* Save device extension list for NRI */
+	qvk.num_enabled_device_extensions = device_extension_count;
+	qvk.enabled_device_extensions = malloc(sizeof(char*) * device_extension_count);
+	memcpy((void*)qvk.enabled_device_extensions, device_extensions, sizeof(char*) * device_extension_count);
+
 	/* create device and queue */
 	result = vkCreateDevice(qvk.physical_device, &dev_create_info, NULL, &qvk.device);
 	if (result != VK_SUCCESS)
@@ -2225,6 +2266,14 @@ destroy_vulkan(void)
 	free(qvk.extensions);
 	qvk.extensions = NULL;
 	qvk.num_extensions = 0;
+
+	free((void*)qvk.enabled_instance_extensions);
+	qvk.enabled_instance_extensions = NULL;
+	qvk.num_enabled_instance_extensions = 0;
+
+	free((void*)qvk.enabled_device_extensions);
+	qvk.enabled_device_extensions = NULL;
+	qvk.num_enabled_device_extensions = 0;
 
 	free(qvk.layers);
 	qvk.layers = NULL;
@@ -3890,18 +3939,23 @@ R_RenderFrame_RTX(refdef_t *fd)
 		BEGIN_PERF_MARKER(post_cmd_buf, PROFILER_ASVGF_FULL);
 		if (ref_mode.enable_denoiser)
 		{
+			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f);
 #ifdef VKPT_NRD
-			if (cvar_pt_nrd->integer && vkpt_nrd_is_initialized())
 			{
-				vkpt_nrd_pack_inputs(post_cmd_buf);
-				vkpt_nrd_dispatch(post_cmd_buf, !temporal_frame_valid);
-				vkpt_nrd_composite(post_cmd_buf);
+				int nrd_now = cvar_pt_nrd->integer;
+				if (nrd_now && !nrd_prev_enabled)
+					nrd_reset_pending = true;
+				nrd_prev_enabled = nrd_now;
+				if (nrd_now)
+				{
+					if (vkpt_nrd_prepare_inputs(post_cmd_buf) == VK_SUCCESS)
+					{
+						if (vkpt_nrd_filter(post_cmd_buf, !temporal_frame_valid || nrd_reset_pending) == VK_SUCCESS)
+							nrd_reset_pending = false;
+					}
+				}
 			}
-			else
 #endif
-			{
-				vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f);
-			}
 		}
 		else
 		{
@@ -4782,10 +4836,6 @@ R_Init_RTX(bool total)
 	vkpt_fog_init();
 	vkpt_cameras_init();
 
-#ifdef VKPT_NRD
-	vkpt_nrd_init((uint16_t)qvk.extent_render.width, (uint16_t)qvk.extent_render.height);
-#endif
-
 	for (int i = 0; i < 256; i++) {
 		qvk.sintab[i] = sinf(i * (2 * M_PI / 255));
 	}
@@ -4830,10 +4880,6 @@ R_Shutdown_RTX(bool total)
 
 	_VK(vkpt_destroy_all(VKPT_INIT_DEFAULT));
 	vkpt_destroy_shader_modules();
-
-#ifdef VKPT_NRD
-	vkpt_nrd_destroy();
-#endif
 
 #ifdef _WIN32
 	SLReflex_Shutdown();
