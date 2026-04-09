@@ -106,8 +106,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_INITIAL_COMP)                \
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_TEMPORAL_COMP)               \
 	SHADER_MODULE_DO(QVK_MOD_RESTIR_DI_SPATIAL_COMP)                \
-	SHADER_MODULE_DO(QVK_MOD_NRD_PACK_INPUTS_COMP)                  \
-	SHADER_MODULE_DO(QVK_MOD_NRD_COMPOSITE_COMP)                    \
+	SHADER_MODULE_DO(QVK_MOD_NRD_PREPARE_COMP)                       \
+	SHADER_MODULE_DO(QVK_MOD_NRD_MERGE_COMP)                        \
 
 #define LIST_RT_RGEN_SHADER_MODULES \
 	SHADER_MODULE_DO(QVK_MOD_PRIMARY_RAYS_RGEN)                      \
@@ -212,6 +212,12 @@ typedef struct QVK_s {
 	bool                        supports_colorspace;
 	bool                        supports_debug_lines;
 	bool                        supports_smooth_lines;
+	bool                        supports_nrd;
+
+	uint32_t                    num_enabled_instance_extensions;
+	const char**                enabled_instance_extensions;
+	uint32_t                    num_enabled_device_extensions;
+	const char**                enabled_device_extensions;
 
 	cmd_buf_group_t             cmd_buffers_graphics;
 	cmd_buf_group_t             cmd_buffers_transfer;
@@ -697,7 +703,7 @@ VkResult vkpt_restir_di_destroy(void);
 VkResult vkpt_restir_di_create_pipelines(void);
 VkResult vkpt_restir_di_destroy_pipelines(void);
 VkResult vkpt_restir_di_dispatch(VkCommandBuffer cmd_buf);
-VkResult vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf);
+VkResult vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf, bool skip_hf_atrous);
 VkResult vkpt_compositing(VkCommandBuffer cmd_buf);
 VkResult vkpt_interleave(VkCommandBuffer cmd_buf);
 VkResult vkpt_taa(VkCommandBuffer cmd_buf);

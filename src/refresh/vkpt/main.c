@@ -3939,7 +3939,11 @@ R_RenderFrame_RTX(refdef_t *fd)
 		BEGIN_PERF_MARKER(post_cmd_buf, PROFILER_ASVGF_FULL);
 		if (ref_mode.enable_denoiser)
 		{
-			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f);
+#ifdef VKPT_NRD
+			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, cvar_pt_nrd->integer != 0);
+#else
+			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, false);
+#endif
 #ifdef VKPT_NRD
 			{
 				int nrd_now = cvar_pt_nrd->integer;

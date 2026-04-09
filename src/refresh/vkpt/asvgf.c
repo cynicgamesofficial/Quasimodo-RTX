@@ -230,7 +230,7 @@ vkpt_asvgf_gradient_reproject(VkCommandBuffer cmd_buf)
 }
 
 VkResult
-vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf)
+vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf, bool skip_hf_atrous)
 {
 	VkDescriptorSet desc_sets[] = {
 		qvk.desc_set_ubo,
@@ -334,17 +334,20 @@ vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf)
 			}
 		}
 
-		int specialization = ATROUS_ITER_0 + i;
+		if (!skip_hf_atrous)
+		{
+			int specialization = ATROUS_ITER_0 + i;
 
-		vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_asvgf[specialization]);
+			vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_asvgf[specialization]);
 
-		vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
-			pipeline_layout_general, 0, LENGTH(desc_sets), desc_sets, 0, 0);
+			vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
+				pipeline_layout_general, 0, LENGTH(desc_sets), desc_sets, 0, 0);
 
-		vkCmdDispatch(cmd_buf,
-				(qvk.gpu_slice_width + 15) / 16,
-				(qvk.extent_render.height + 15) / 16,
-				1);
+			vkCmdDispatch(cmd_buf,
+					(qvk.gpu_slice_width + 15) / 16,
+					(qvk.extent_render.height + 15) / 16,
+					1);
+		}
 
 		BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_LF_SH]);
 		BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_LF_COCG]);
