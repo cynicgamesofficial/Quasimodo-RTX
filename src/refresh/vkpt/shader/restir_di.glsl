@@ -366,6 +366,8 @@ restir_validate_polygon_sample_identity(uint poly_idx, vec3 sample_pos)
 		return false;
 
 	LightPolygon light = get_light_polygon(poly_idx);
+	if(restir_is_sky_polygon_light(light))
+		return false;
 	if(!restir_is_finite_vec3(light.color))
 		return false;
 
@@ -569,23 +571,21 @@ evaluate_restir_target_sampled(uint lightData, vec3 sample_pos,
 			return 0.0;
 
 		LightPolygon light = get_light_polygon(poly_idx);
+		if(restir_is_sky_polygon_light(light))
+			return 0.0;
+
+		// Reject the stored sample point if it is geometrically behind this
+		// surface.  Without this the spatial (and temporal) re-evaluation can
+		// return a non-zero targetPdf for a neighbour's light that sits below
+		// the current pixel's geometric plane, causing the shadow ray in
+		// direct_lighting.rgen to cross through geometry and produce the
+		// flickering shadow artefacts visible during camera motion.
+		if(dot(sample_pos - position, geo_normal) <= 0.0)
+			return 0.0;
 
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
 			phong_exp, phong_scale, phong_weight);
-
-		float light_lum;
-		if(restir_is_sky_polygon_light(light))
-		{
-			// Use actual directional sky radiance so the target tracks
-			// the shading value.  A global sky_luminance average under-
-			// estimates bright directions (near sun) → huge W → fireflies.
-			vec3 L = normalize(sample_pos - position);
-			light_lum = max(luminance(env_map(L, true)) * global_ubo.pt_env_scale, 1e-7);
-		}
-		else
-		{
-			light_lum = restir_get_polygon_target_weight(light);
-		}
+		float light_lum = restir_get_polygon_target_weight(light);
 
 		return area * light_lum;
 	}
@@ -677,6 +677,8 @@ evaluate_restir_target(uint lightData,
 			return 0.0;
 
 		LightPolygon light = get_light_polygon(poly_idx);
+		if(restir_is_sky_polygon_light(light))
+			return 0.0;
 
 		// spherical_tri_area already includes a BRDF-weighted factor
 		float area = spherical_tri_area(light.positions, position, normal, view_dir,
