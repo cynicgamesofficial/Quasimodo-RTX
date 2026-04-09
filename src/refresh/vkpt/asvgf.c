@@ -24,6 +24,7 @@ enum {
 	GRADIENT_ATROUS,
 	GRADIENT_REPROJECT,
 	TEMPORAL,
+	TEMPORAL_LF,
 	ATROUS_LF,
 	ATROUS_ITER_0,
 	ATROUS_ITER_1,
@@ -126,6 +127,11 @@ vkpt_asvgf_create_pipelines()
 		[TEMPORAL] = {
 			.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 			.stage  = SHADER_STAGE(QVK_MOD_ASVGF_TEMPORAL_COMP, VK_SHADER_STAGE_COMPUTE_BIT),
+			.layout = pipeline_layout_general,
+		},
+		[TEMPORAL_LF] = {
+			.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			.stage  = SHADER_STAGE(QVK_MOD_ASVGF_TEMPORAL_LF_COMP, VK_SHADER_STAGE_COMPUTE_BIT),
 			.layout = pipeline_layout_general,
 		},
 		[ATROUS_LF] = {
@@ -284,7 +290,8 @@ vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf, bool skip_hf_atrous)
 	BEGIN_PERF_MARKER(cmd_buf, PROFILER_ASVGF_TEMPORAL);
 
 	/* temporal accumulation / filtering */
-	vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_asvgf[TEMPORAL]);
+	int temporal_pipeline = skip_hf_atrous ? TEMPORAL_LF : TEMPORAL;
+	vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_asvgf[temporal_pipeline]);
 	vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
 		pipeline_layout_general, 0, LENGTH(desc_sets), desc_sets, 0, 0);
 	vkCmdDispatch(cmd_buf,
@@ -295,9 +302,12 @@ vkpt_asvgf_filter(VkCommandBuffer cmd_buf, bool enable_lf, bool skip_hf_atrous)
 
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_LF_SH]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_LF_COCG]);
-	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_HF]);
-	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_MOMENTS]);
-	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_FILTERED_SPEC_A + (qvk.frame_counter & 1)]);
+	if (!skip_hf_atrous)
+	{
+		BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_HF]);
+		BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_MOMENTS]);
+		BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_FILTERED_SPEC_A + (qvk.frame_counter & 1)]);
+	}
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_HIST_MOMENTS_HF_A]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_HIST_MOMENTS_HF_B]);
 

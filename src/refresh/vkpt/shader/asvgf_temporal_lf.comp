@@ -1,0 +1,282 @@
+/*
+Copyright (C) 2018 Christoph Schied
+Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// ========================================================================== //
+// LF-only temporal filter variant used in ReSTIR + NRD mode.
+// Keeps LF history and downsampling intact while skipping HF/spec temporal work.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+#define GROUP_SIZE 15
+#define FILTER_RADIUS 1
+#define SHARED_SIZE (GROUP_SIZE + FILTER_RADIUS * 2)
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
+
+#define GLOBAL_UBO_DESC_SET_IDX 0
+#include "global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "global_textures.h"
+
+shared uvec2 s_normal_lum[SHARED_SIZE][SHARED_SIZE];
+shared float s_depth[SHARED_SIZE][SHARED_SIZE];
+shared vec4 s_lf_shy[GROUP_SIZE][GROUP_SIZE];
+shared vec2 s_lf_cocg[GROUP_SIZE][GROUP_SIZE];
+shared float s_depth_width[GROUP_SIZE/GRAD_DWN][GROUP_SIZE/GRAD_DWN];
+
+#include "utils.glsl"
+#include "asvgf.glsl"
+
+void
+preload()
+{
+	ivec2 groupBase = ivec2(gl_WorkGroupID) * GROUP_SIZE - FILTER_RADIUS;
+
+	for(uint linear_idx = gl_LocalInvocationIndex; linear_idx < SHARED_SIZE * SHARED_SIZE; linear_idx += GROUP_SIZE * GROUP_SIZE)
+	{
+		float t = (float(linear_idx) + 0.5) / float(SHARED_SIZE);
+		int xx = int(floor(fract(t) * float(SHARED_SIZE)));
+		int yy = int(floor(t));
+
+		ivec2 ipos = groupBase + ivec2(xx, yy);
+		float depth = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+		vec3 normal = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+
+		s_normal_lum[yy][xx] = packHalf4x16(vec4(normal.xyz, 0.0));
+		s_depth[yy][xx] = depth;
+	}
+}
+
+void
+get_shared_data(ivec2 offset, out float depth, out vec3 normal)
+{
+	ivec2 addr = ivec2(gl_LocalInvocationID) + ivec2(FILTER_RADIUS) + offset;
+	uvec2 normal_lum = s_normal_lum[addr.y][addr.x];
+
+	depth = s_depth[addr.y][addr.x];
+	normal = unpackHalf4x16(normal_lum).xyz;
+}
+
+ivec2 checker_to_flat(ivec2 pos, int width)
+{
+	uint half_width = width / 2;
+	bool is_even_checkerboard = pos.x < half_width;
+
+	return ivec2(
+		is_even_checkerboard
+			? (pos.x * 2) + (pos.y & 1)
+			: ((pos.x - half_width) * 2) + ((pos.y & 1) ^ 1),
+		pos.y);
+}
+
+ivec2 flat_to_checker(ivec2 pos, int width)
+{
+	uint half_width = width / 2;
+	bool is_even_checkerboard = (pos.x & 1) == (pos.y & 1);
+
+	return ivec2(
+		(pos.x / 2) + (is_even_checkerboard ? 0 : half_width),
+		pos.y);
+}
+
+void
+main()
+{
+	preload();
+	barrier();
+
+	ivec2 ipos = ivec2(gl_GlobalInvocationID);
+	vec4 motion = texelFetch(TEX_PT_MOTION, ipos, 0);
+
+	int checkerboard_flags = int(texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).w);
+	bool is_checkerboarded_surface = bitCount(checkerboard_flags & CHECKERBOARD_FLAG_FIELD_MASK) > 1;
+	bool sample_across_fields = !is_checkerboarded_surface && (global_ubo.current_gpu_slice_width == global_ubo.width);
+
+	vec2 pos_prev;
+	if (sample_across_fields)
+	{
+		pos_prev = ((vec2(checker_to_flat(ipos, global_ubo.width)) + vec2(0.5)) * vec2(global_ubo.inv_width, global_ubo.inv_height) + motion.xy) * vec2(global_ubo.prev_width, global_ubo.prev_height);
+	}
+	else
+	{
+		pos_prev = ((vec2(ipos) + vec2(0.5)) * vec2(global_ubo.inv_width * 2, global_ubo.inv_height) + motion.xy) * vec2(global_ubo.prev_width / 2, global_ubo.prev_height);
+	}
+
+	float depth_curr;
+	vec3 normal_curr;
+	get_shared_data(ivec2(0), depth_curr, normal_curr);
+
+	vec3 geo_normal_curr = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+
+	bool temporal_sample_valid_diff = false;
+	SH temporal_color_lf = init_SH();
+	float temporal_hist_len_lf = 0.0;
+	{
+		float temporal_sum_w_diff = 0.0;
+
+		vec2 pos_ld = floor(pos_prev - vec2(0.5));
+		vec2 subpix = fract(pos_prev - vec2(0.5) - pos_ld);
+
+		int field_left = 0;
+		int field_right = sample_across_fields ? global_ubo.prev_width : (global_ubo.prev_width / 2);
+		if (!sample_across_fields && ipos.x >= global_ubo.width / 2)
+		{
+			field_left = field_right;
+			field_right = global_ubo.prev_width;
+		}
+
+		const ivec2 off[4] = { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } };
+		float w[4] = {
+			(1.0 - subpix.x) * (1.0 - subpix.y),
+			(subpix.x      ) * (1.0 - subpix.y),
+			(1.0 - subpix.x) * (subpix.y      ),
+			(subpix.x      ) * (subpix.y      )
+		};
+		for(int i = 0; i < 4; i++) {
+			ivec2 p = ivec2(pos_ld) + off[i];
+
+			if(p.x < field_left || p.x >= field_right || p.y >= global_ubo.prev_height)
+				continue;
+
+			if (sample_across_fields)
+				p = flat_to_checker(p, global_ubo.prev_width);
+
+			float depth_prev = texelFetch(TEX_PT_VIEW_DEPTH_B, p, 0).x;
+			vec3 normal_prev = decode_normal(texelFetch(TEX_PT_NORMAL_B, p, 0).x);
+			vec3 geo_normal_prev = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_B, p, 0).x);
+
+			float dist_depth = abs(depth_curr - depth_prev + motion.z) / abs(depth_curr);
+			float dot_normals = dot(normal_curr, normal_prev);
+			float dot_geo_normals = dot(geo_normal_curr, geo_normal_prev);
+
+			if(depth_curr < 0)
+				dist_depth *= 0.25;
+
+			if(dist_depth < 0.1 && dot_geo_normals > 0.5)
+			{
+				float w_diff = w[i] * max(dot_normals, 0);
+
+				SH hist_color_lf = load_SH(TEX_ASVGF_HIST_COLOR_LF_SH_B, TEX_ASVGF_HIST_COLOR_LF_COCG_B, p);
+				accumulate_SH(temporal_color_lf, hist_color_lf, w_diff);
+				temporal_hist_len_lf += texelFetch(TEX_ASVGF_HIST_MOMENTS_HF_B, p, 0).a * w_diff;
+				temporal_sum_w_diff += w_diff;
+			}
+		}
+
+		if(temporal_sum_w_diff > 1e-6)
+		{
+			float inv_w_diff = 1.0 / temporal_sum_w_diff;
+			temporal_color_lf.shY *= inv_w_diff;
+			temporal_color_lf.CoCg *= inv_w_diff;
+			temporal_hist_len_lf *= inv_w_diff;
+			temporal_sample_valid_diff = true;
+		}
+	}
+
+	SH color_curr_lf = load_SH(TEX_PT_COLOR_LF_SH, TEX_PT_COLOR_LF_COCG, ipos);
+	SH out_color_lf;
+	float out_hist_len_lf;
+
+	float grad_lf = texelFetch(TEX_ASVGF_GRAD_LF_PONG, ipos / GRAD_DWN, 0).r;
+	grad_lf = clamp(grad_lf, 0, 1);
+
+	if(temporal_sample_valid_diff)
+	{
+		float antilag_alpha_lf = clamp(mix(1.0, global_ubo.flt_antilag_lf * grad_lf, global_ubo.flt_temporal_lf), 0, 1);
+		float hist_len_lf = min(temporal_hist_len_lf * pow(1.0 - antilag_alpha_lf, 10) + 1.0, 256.0);
+		float alpha_color_lf = max(global_ubo.flt_min_alpha_color_lf, 1.0 / hist_len_lf);
+		alpha_color_lf = mix(alpha_color_lf, 1.0, antilag_alpha_lf);
+
+		out_color_lf = mix_SH(temporal_color_lf, color_curr_lf, alpha_color_lf);
+		out_hist_len_lf = hist_len_lf;
+	}
+	else
+	{
+		out_color_lf = color_curr_lf;
+		out_hist_len_lf = 1.0;
+	}
+
+	imageStore(IMG_ASVGF_HIST_MOMENTS_HF_A, ipos, vec4(0.0, 0.0, 0.0, out_hist_len_lf));
+	STORE_SH(IMG_ASVGF_HIST_COLOR_LF_SH_A, IMG_ASVGF_HIST_COLOR_LF_COCG_A, ipos, out_color_lf);
+
+	barrier();
+
+	s_lf_shy[gl_LocalInvocationID.y][gl_LocalInvocationID.x] = out_color_lf.shY;
+	s_lf_cocg[gl_LocalInvocationID.y][gl_LocalInvocationID.x] = out_color_lf.CoCg;
+
+	if(gl_LocalInvocationID.x % GRAD_DWN == 1 && gl_LocalInvocationID.y % GRAD_DWN == 1)
+		s_depth_width[gl_LocalInvocationID.y / GRAD_DWN][gl_LocalInvocationID.x / GRAD_DWN] = motion.a;
+
+	barrier();
+
+	uvec2 lowres_local_id;
+	lowres_local_id.x = gl_LocalInvocationIndex % (GROUP_SIZE / GRAD_DWN);
+	lowres_local_id.y = gl_LocalInvocationIndex / (GROUP_SIZE / GRAD_DWN);
+
+	if(lowres_local_id.y >= (GROUP_SIZE / GRAD_DWN))
+		return;
+
+	uvec2 center_shared_pos = lowres_local_id * GRAD_DWN + uvec2(1);
+	vec3 center_normal = unpackHalf4x16(s_normal_lum[center_shared_pos.y + FILTER_RADIUS][center_shared_pos.x + FILTER_RADIUS]).xyz;
+	float center_depth = s_depth[center_shared_pos.y + FILTER_RADIUS][center_shared_pos.x + FILTER_RADIUS];
+	float depth_width = s_depth_width[lowres_local_id.y][lowres_local_id.x];
+
+	SH center_lf;
+	center_lf.shY = s_lf_shy[center_shared_pos.y][center_shared_pos.x];
+	center_lf.CoCg = s_lf_cocg[center_shared_pos.y][center_shared_pos.x];
+
+	float sum_w = 1;
+	SH sum_lf = center_lf;
+
+	for(int yy = -1; yy <= 1; yy++)
+	{
+		for(int xx = -1; xx <= 1; xx++)
+		{
+			if(yy == 0 && xx == 0)
+				continue;
+
+			vec3 p_normal = unpackHalf4x16(s_normal_lum[center_shared_pos.y + FILTER_RADIUS + yy][center_shared_pos.x + FILTER_RADIUS + xx]).xyz;
+			float p_depth = s_depth[center_shared_pos.y + FILTER_RADIUS + yy][center_shared_pos.x + FILTER_RADIUS + xx];
+
+			float dist_depth = abs(p_depth - center_depth) * depth_width;
+			if(dist_depth < 2)
+			{
+				float w = pow(max(dot(p_normal, center_normal), 0), 8);
+
+				SH p_lf;
+				p_lf.shY = s_lf_shy[center_shared_pos.y + yy][center_shared_pos.x + xx];
+				p_lf.CoCg = s_lf_cocg[center_shared_pos.y + yy][center_shared_pos.x + xx];
+
+				accumulate_SH(sum_lf, p_lf, w);
+				sum_w += w;
+			}
+		}
+	}
+
+	float inv_w = 1.0 / sum_w;
+	sum_lf.shY *= inv_w;
+	sum_lf.CoCg *= inv_w;
+
+	ivec2 ipos_lowres = ivec2(gl_WorkGroupID.xy) * (GROUP_SIZE / GRAD_DWN) + ivec2(lowres_local_id);
+	STORE_SH(IMG_ASVGF_ATROUS_PING_LF_SH, IMG_ASVGF_ATROUS_PING_LF_COCG, ipos_lowres, sum_lf);
+}
