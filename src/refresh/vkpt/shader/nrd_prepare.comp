@@ -10,6 +10,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #define GLOBAL_TEXTURES_DESC_SET_IDX 1
 #include "global_textures.h"
 
+#include "projection.glsl"
 #include "utils.glsl"
 
 vec4 pack_nrd_normal_roughness(vec3 normal, float roughness)
@@ -21,6 +22,11 @@ vec4 pack_nrd_normal_roughness(vec3 normal, float roughness)
 	return vec4(normal, clamp(roughness, 0.0, 1.0));
 }
 
+float signed_distance_sign(float value)
+{
+	return value < 0.0 ? -1.0 : 1.0;
+}
+
 void main()
 {
 	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
@@ -28,6 +34,7 @@ void main()
 		return;
 
 	float view_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	vec3 motion = texelFetch(TEX_PT_MOTION, ipos, 0).xyz;
 	uint packed_normal = texelFetch(TEX_PT_NORMAL_A, ipos, 0).x;
 	vec2 metallic_roughness = texelFetch(TEX_PT_METALLIC_A, ipos, 0).rg;
 	float spec_hit_dist = texelFetch(TEX_PT_SPEC_HIT_DIST_A, ipos, 0).x;
@@ -46,6 +53,22 @@ void main()
 	vec2 filtered_gradients = clamp(texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, ipos / GRAD_DWN, 0).rg, vec2(0.0), vec2(1.0));
 	vec2 confidence = has_surface ? clamp(vec2(1.0) - filtered_gradients, vec2(0.0), vec2(1.0)) : vec2(0.0);
 
+	float nrd_view_z = PRIMARY_RAY_T_MAX * 3.0;
+	vec3 nrd_motion = vec3(0.0);
+	if (has_surface)
+	{
+		vec2 screen_uv = (vec2(ipos) + vec2(0.5)) / vec2(global_ubo.current_gpu_slice_width, global_ubo.height);
+		float signed_depth_prev = view_depth + motion.z;
+		float view_z_sign = signed_distance_sign(view_depth);
+		float view_z_prev_sign = signed_distance_sign(signed_depth_prev);
+
+		vec3 view_pos = projection_screen_to_view(screen_uv, abs(view_depth), false);
+		vec3 view_pos_prev = projection_screen_to_view(screen_uv + motion.xy, abs(signed_depth_prev), true);
+
+		nrd_view_z = view_pos.z * view_z_sign;
+		nrd_motion = vec3(motion.xy, view_pos_prev.z * view_z_prev_sign - nrd_view_z);
+	}
+
 	float disocclusion_mix = 0.0;
 	if (has_surface && is_secondary_surface)
 	{
@@ -56,8 +79,11 @@ void main()
 
 	imageStore(IMG_NRD_NORMAL_ROUGHNESS, ipos, pack_nrd_normal_roughness(normal, roughness));
 	imageStore(IMG_NRD_DIFF_RADIANCE_HITDIST, ipos, vec4(max(diffuse, vec3(0.0)), 0.0));
-	imageStore(IMG_NRD_SPEC_RADIANCE_HITDIST, ipos, vec4(max(specular, vec3(0.0)), max(spec_hit_dist, 0.0)));
+	float nrd_spec_hit_dist = spec_hit_dist > 0.0 ? spec_hit_dist : abs(nrd_view_z);
+	imageStore(IMG_NRD_SPEC_RADIANCE_HITDIST, ipos, vec4(max(specular, vec3(0.0)), has_surface ? nrd_spec_hit_dist : 0.0));
 	imageStore(IMG_NRD_DIFF_CONFIDENCE, ipos, vec4(confidence.x));
 	imageStore(IMG_NRD_SPEC_CONFIDENCE, ipos, vec4(confidence.y));
 	imageStore(IMG_NRD_DISOCCLUSION_MIX, ipos, vec4(disocclusion_mix));
+	imageStore(IMG_NRD_VIEWZ, ipos, vec4(nrd_view_z));
+	imageStore(IMG_NRD_MV, ipos, vec4(nrd_motion, 0.0));
 }
