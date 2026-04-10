@@ -132,8 +132,10 @@ vkpt_nrd_prepare_inputs(VkCommandBuffer cmd_buf)
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_PT_METALLIC_A]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_PT_COLOR_HF]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_PT_COLOR_SPEC]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_PT_MOTION]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_PT_SPEC_HIT_DIST_A]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_GRAD_HF_SPEC_PONG]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_HF]);
 
 	vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_nrd[NRD_PREP_PIPELINE]);
 	vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -150,6 +152,8 @@ vkpt_nrd_prepare_inputs(VkCommandBuffer cmd_buf)
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_NRD_DIFF_CONFIDENCE]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_NRD_SPEC_CONFIDENCE]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_NRD_DISOCCLUSION_MIX]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_NRD_VIEWZ]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_NRD_MV]);
 
 	return VK_SUCCESS;
 }
