@@ -136,6 +136,7 @@ vkpt_nrd_prepare_inputs(VkCommandBuffer cmd_buf)
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_PT_SPEC_HIT_DIST_A]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_GRAD_HF_SPEC_PONG]);
 	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PING_HF]);
+	BARRIER_COMPUTE(cmd_buf, qvk.images[VKPT_IMG_ASVGF_ATROUS_PONG_HF]);
 
 	vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_nrd[NRD_PREP_PIPELINE]);
 	vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE,

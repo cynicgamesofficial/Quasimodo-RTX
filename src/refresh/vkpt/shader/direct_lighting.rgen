@@ -213,11 +213,12 @@ get_visible_sky_polygon_illumination(
 }
 
 void
-direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out vec3 o_specular, out vec3 sun_spec_bypass)
+direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out vec3 o_specular, out vec3 sun_spec_bypass, out vec3 sun_diff_bypass)
 {
 	high_freq = vec3(0);
 	o_specular = vec3(0);
 	sun_spec_bypass = vec3(0);
+	sun_diff_bypass = vec3(0);
 
 	rng_seed = texelFetch(TEX_ASVGF_RNG_SEED_A, ipos, 0).r;
 
@@ -532,6 +533,7 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 		high_freq += direct_sun_diffuse;
 		o_specular += direct_sun_specular;
 		sun_spec_bypass = clamp_output(demodulate_specular(primary_base_reflectivity, direct_sun_specular));
+		sun_diff_bypass = clamp_output(direct_sun_diffuse);
 	}
 
 	o_specular = demodulate_specular(primary_base_reflectivity, o_specular);
@@ -549,8 +551,8 @@ main()
 
 	bool is_odd_checkerboard = (rt_LaunchID.z != 0) || (push_constants.gpu_index == 1);
 
-	vec3 high_freq, specular, sun_spec_bypass;
-	direct_lighting(ipos, is_odd_checkerboard, high_freq, specular, sun_spec_bypass);
+	vec3 high_freq, specular, sun_spec_bypass, sun_diff_bypass;
+	direct_lighting(ipos, is_odd_checkerboard, high_freq, specular, sun_spec_bypass, sun_diff_bypass);
 
 	high_freq *= STORAGE_SCALE_HF;
 	specular *= STORAGE_SCALE_SPEC;
@@ -560,4 +562,5 @@ main()
 	imageStore(IMG_PT_COLOR_HF, ipos, uvec4(packRGBE(high_freq)));
 	imageStore(IMG_PT_COLOR_SPEC, ipos, uvec4(packRGBE(specular)));
 	imageStore(IMG_ASVGF_ATROUS_PING_HF, ipos, uvec4(packRGBE(sun_spec_bypass * STORAGE_SCALE_SPEC)));
+	imageStore(IMG_ASVGF_ATROUS_PONG_HF, ipos, uvec4(packRGBE(sun_diff_bypass * STORAGE_SCALE_HF)));
 }

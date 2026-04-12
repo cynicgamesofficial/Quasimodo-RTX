@@ -102,6 +102,7 @@ void main()
 	filtered_lf.CoCg /= STORAGE_SCALE_LF;
 
 	vec3 filtered_hf = max(texelFetch(TEX_NRD_OUT_DIFF_RADIANCE_HITDIST, ipos, 0).rgb, vec3(0.0));
+	filtered_hf += unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PONG_HF, ipos, 0).x) / STORAGE_SCALE_HF;
 	vec3 filtered_spec = max(texelFetch(TEX_NRD_OUT_SPEC_RADIANCE_HITDIST, ipos, 0).rgb, vec3(0.0));
 	filtered_spec += unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PING_HF, ipos, 0).x) / STORAGE_SCALE_SPEC;
 

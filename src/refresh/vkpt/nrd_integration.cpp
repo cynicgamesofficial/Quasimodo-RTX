@@ -280,9 +280,9 @@ extern "C" VkResult vkpt_nrd_backend_denoise(VkCommandBuffer cmd_buf, bool reset
 
 	nrd::ResourceSnapshot snapshot;
 	snapshot.restoreInitialState = true;
-	snapshot.SetResource(nrd::ResourceType::IN_MV, make_vk_resource(VKPT_IMG_PT_MOTION, initial_state));
+	snapshot.SetResource(nrd::ResourceType::IN_MV, make_vk_resource(VKPT_IMG_NRD_MV, initial_state));
 	snapshot.SetResource(nrd::ResourceType::IN_NORMAL_ROUGHNESS, make_vk_resource(VKPT_IMG_NRD_NORMAL_ROUGHNESS, initial_state));
-	snapshot.SetResource(nrd::ResourceType::IN_VIEWZ, make_vk_resource(VKPT_IMG_PT_VIEW_DEPTH_A, initial_state));
+	snapshot.SetResource(nrd::ResourceType::IN_VIEWZ, make_vk_resource(VKPT_IMG_NRD_VIEWZ, initial_state));
 	snapshot.SetResource(nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST, make_vk_resource(VKPT_IMG_NRD_DIFF_RADIANCE_HITDIST, initial_state));
 	snapshot.SetResource(nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST, make_vk_resource(VKPT_IMG_NRD_SPEC_RADIANCE_HITDIST, initial_state));
 	snapshot.SetResource(nrd::ResourceType::IN_DIFF_CONFIDENCE, make_vk_resource(VKPT_IMG_NRD_DIFF_CONFIDENCE, initial_state));

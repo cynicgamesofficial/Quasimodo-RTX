@@ -50,7 +50,9 @@ void main()
 	vec3 diffuse = has_surface ? unpackRGBE(texelFetch(TEX_PT_COLOR_HF, ipos, 0).x) / STORAGE_SCALE_HF : vec3(0.0);
 	vec3 specular = has_surface ? unpackRGBE(texelFetch(TEX_PT_COLOR_SPEC, ipos, 0).x) / STORAGE_SCALE_SPEC : vec3(0.0);
 	vec3 sun_spec_bypass = has_surface ? unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PING_HF, ipos, 0).x) / STORAGE_SCALE_SPEC : vec3(0.0);
+	vec3 sun_diff_bypass = has_surface ? unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PONG_HF, ipos, 0).x) / STORAGE_SCALE_HF : vec3(0.0);
 	specular = max(specular - sun_spec_bypass, vec3(0.0));
+	diffuse = max(diffuse - sun_diff_bypass, vec3(0.0));
 
 	vec2 filtered_gradients = clamp(texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, ipos / GRAD_DWN, 0).rg, vec2(0.0), vec2(1.0));
 	vec2 confidence = has_surface ? clamp(vec2(1.0) - filtered_gradients, vec2(0.0), vec2(1.0)) : vec2(0.0);
