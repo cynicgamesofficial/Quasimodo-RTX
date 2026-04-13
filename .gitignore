@@ -43,7 +43,6 @@ music/
 
 streamline/bin/
 streamline/lib/
-sl.interposer.json
 sl.common.json
 sl.imgui.json
 sl.reflex.json
