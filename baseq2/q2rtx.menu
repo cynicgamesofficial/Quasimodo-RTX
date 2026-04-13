@@ -123,9 +123,9 @@ begin photomode
 end
 
 begin video
-    //title "Video Setup"
     background #212F3CD0
     style --compact
+    title "Graphics Settings"
     banner m_banner_video
 	pairs "renderer" vid_rtx opengl 0 rtx 1
     values -s "use LEFT and RIGHT keys to select" "video mode" vid_fullscreen windowed $$vid_modelist
@@ -150,11 +150,6 @@ begin video
         pairs "anti-aliasing" flt_taa "none" 0 "temporal AA" 1 "temporal upscaling" 2
         pairs "global illumination" pt_num_bounce_rays low 0.5 medium 1 high 2
         pairs "ReSTIR direct lighting (DI)" pt_restir_di "legacy" 0 "ReSTIR" 1
-        ifeq pt_restir_di 1
-            toggle "ReSTIR DI spatial reuse" pt_restir_di_spatial
-            pairs "ReSTIR DI debug view" pt_restir_di_debug "Off" 0 "W" 1 "M" 2 "Light type" 3 "Target PDF" 4 "Spatial" 5
-            pairs "denoiser (ReSTIR)" pt_nrd "ASVGF (legacy)" 0 "NRD (NVIDIA ReLAX)" 1
-        endif
         pairs "reflection/refraction depth" pt_reflect_refract off 0 1 1 2 2 4 4 8 8
 		toggle --status "turn some monitors in the game into security camera views" \
             "security cameras" pt_cameras
@@ -163,15 +158,11 @@ begin video
         toggle "bloom" bloom_enable
         blank
         toggle "denoiser" flt_enable
-        toggle "textures" flt_fixed_albedo ~1
         pairs "texture filtering" pt_nearest "anisotropic" 0 "mixed" 1 "nearest (noisy)" 2
         pairs --status "experimental feature - simulates reflection and refraction effects in thick glass" \
             "thick glass refraction" pt_thick_glass "disabled" 0 "photo mode only" 1 "enabled" 2
         pairs projection pt_projection perspective 0 panini 1 stereographic 2 cylindrical 3 equirectangular 4 mercator 5
         blank
-		pairs "multi-gpu support" sli "disabled" 0 "when available" 1
-        pairs "ray tracing API" ray_tracing_api "automatic selection" "auto" "prefer KHR_ray_query" "query"  "prefer KHR_ray_tracing_pipeline" "pipeline"
-        toggle "GPU profiler" profiler
     endif
 
     ifneq vid_rtx 1
@@ -195,6 +186,32 @@ begin video
     endif
 end
 
+begin developer
+    background #212F3CD0
+    style --compact
+    title "Developer"
+    action "graphics settings..." pushmenu video
+    blank
+    ifeq vid_rtx 1
+        ifeq pt_restir_di 1
+            toggle "ReSTIR DI spatial reuse" pt_restir_di_spatial
+            pairs "ReSTIR DI debug view" pt_restir_di_debug \
+                "Off" 0 "W" 1 "M" 2 "Light type" 3 "Target PDF" 4 "Spatial" 5 "Temporal lifecycle" 6
+            pairs "denoiser (ReSTIR)" pt_nrd "ASVGF (legacy)" 0 "NRD (NVIDIA ReLAX)" 1
+            toggle "ReSTIR light PDF correction" pt_light_stats
+        endif
+        toggle "textures (fixed albedo debug)" flt_fixed_albedo ~1
+        blank
+        pairs "multi-gpu support" sli "disabled" 0 "when available" 1
+        pairs "ray tracing API" ray_tracing_api "automatic selection" "auto" "prefer KHR_ray_query" "query"  "prefer KHR_ray_tracing_pipeline" "pipeline"
+        toggle "GPU profiler" profiler
+        blank
+        toggle "SVGF gradient overlay" flt_show_gradients
+        pairs "tone mapping debug" tm_debug "Off" 0 "histogram" 1 "curve" 2
+        toggle "show sky geometry" pt_show_sky
+    endif
+end
+
 begin options
     //title "Options"
     background #212F3CD0
@@ -204,6 +221,7 @@ begin options
         action "environment setup" pushmenu environment
     endif
     action "graphics settings" pushmenu video
+    action "developer..." pushmenu developer
     action "photo mode settings" pushmenu photomode
     action "sound settings" pushmenu sound
     action "player setup" pushmenu players
@@ -274,6 +292,10 @@ begin effects
         range -p -f "%.0f%%" "screen blending center strength" tm_blend_scale_center 0 1
         range -p -f "%.0f%%" "screen blending border strength" tm_blend_scale_border 0 1
         toggle "screen warping" pt_waterwarp
+        pairs "Water mode" pt_water_fbm "Fallback" 0 "Current Analytic" 1 "Sine Wave" 2 "Exponential Sine Wave" 3 "Gerstner Wave" 4 "FBM Fluid Simulation" 5
+        range "Water wave scale" pt_water_wave_scale 0.1 4.0
+        range "Water wave speed" pt_water_wave_speed 0.0 4.0
+        range "Water wave steepness" pt_water_wave_steepness 1.0 4.0
     endif
     toggle "grenade explosions" cl_disable_explosions ~0
     toggle "rocket explosions" cl_disable_explosions ~1
@@ -461,7 +483,7 @@ begin main
     bitmap m_main_game pushmenu singleplayer
     bitmap m_main_multiplayer pushmenu multiplayer
     bitmap m_main_options pushmenu options
-    bitmap m_main_video pushmenu video
+    bitmap m_main_video pushmenu developer
     bitmap m_main_quit pushmenu quit
 end
 
@@ -473,7 +495,7 @@ begin game
     bitmap m_main_game pushmenu singleplayer
     bitmap m_main_multiplayer pushmenu multiplayer
     bitmap m_main_options pushmenu options
-    bitmap m_main_video pushmenu video
+    bitmap m_main_video pushmenu developer
     bitmap m_main_quit pushmenu quit
 end
 
