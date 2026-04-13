@@ -80,6 +80,14 @@ begin environment
     blank
     range -f "%.1f deg" --status "latitude to compute the sun position in automatic mode" "latitude" sun_latitude -90 90 2
     blank
+    ifeq vid_rtx 1
+        toggle "screen warping" pt_waterwarp
+        pairs "Water mode" pt_water_fbm "Fallback" 0 "Current Analytic" 1 "Sine Wave" 2 "Exponential Sine Wave" 3 "Gerstner Wave" 4 "FBM Fluid Simulation" 5
+        range "Water wave scale" pt_water_wave_scale 0.1 4.0
+        range "Water wave speed" pt_water_wave_speed 0.0 4.0
+        range "Water wave steepness" pt_water_wave_steepness 1.0 4.0
+    endif
+    blank
 end
 
 begin resolution
@@ -291,11 +299,6 @@ begin effects
         toggle "screen blending" tm_blend_enable
         range -p -f "%.0f%%" "screen blending center strength" tm_blend_scale_center 0 1
         range -p -f "%.0f%%" "screen blending border strength" tm_blend_scale_border 0 1
-        toggle "screen warping" pt_waterwarp
-        pairs "Water mode" pt_water_fbm "Fallback" 0 "Current Analytic" 1 "Sine Wave" 2 "Exponential Sine Wave" 3 "Gerstner Wave" 4 "FBM Fluid Simulation" 5
-        range "Water wave scale" pt_water_wave_scale 0.1 4.0
-        range "Water wave speed" pt_water_wave_speed 0.0 4.0
-        range "Water wave steepness" pt_water_wave_steepness 1.0 4.0
     endif
     toggle "grenade explosions" cl_disable_explosions ~0
     toggle "rocket explosions" cl_disable_explosions ~1
@@ -477,26 +480,23 @@ begin quit
 end
 
 begin main
-    //title "Main Menu"
-    plaque m_main_plaque m_main_logo
-    footer m_main_footer 0.5
-    bitmap m_main_game pushmenu singleplayer
-    bitmap m_main_multiplayer pushmenu multiplayer
-    bitmap m_main_options pushmenu options
-    bitmap m_main_video pushmenu developer
-    bitmap m_main_quit pushmenu quit
+    background #212F3CD0
+    style --compact
+    action "Single player" pushmenu singleplayer
+    action "Multiplayer" pushmenu multiplayer
+    action "Options" pushmenu options
+    action "Developer" pushmenu developer
+    action "Quit" pushmenu quit
 end
 
 begin game
     background #212F3CD0
     style --compact
-    plaque m_main_plaque m_main_logo
-    footer m_main_footer 0.5
-    bitmap m_main_game pushmenu singleplayer
-    bitmap m_main_multiplayer pushmenu multiplayer
-    bitmap m_main_options pushmenu options
-    bitmap m_main_video pushmenu developer
-    bitmap m_main_quit pushmenu quit
+    action "Single player" pushmenu singleplayer
+    action "Multiplayer" pushmenu multiplayer
+    action "Options" pushmenu options
+    action "Developer" pushmenu developer
+    action "Quit" pushmenu quit
 end
 
 begin addressbook
