@@ -103,10 +103,7 @@ void main()
 		return;
 
 	SH filtered_lf;
-	if (is_fast_path_active())
-		filtered_lf = init_SH();
-	else
-		filtered_lf = interpolate_lf(TEX_ASVGF_ATROUS_PING_LF_SH, TEX_ASVGF_ATROUS_PING_LF_COCG, ipos);
+	filtered_lf = interpolate_lf(TEX_ASVGF_ATROUS_PING_LF_SH, TEX_ASVGF_ATROUS_PING_LF_COCG, ipos);
 	filtered_lf.shY /= STORAGE_SCALE_LF;
 	filtered_lf.CoCg /= STORAGE_SCALE_LF;
 

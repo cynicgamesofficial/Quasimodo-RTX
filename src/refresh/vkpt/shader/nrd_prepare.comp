@@ -27,63 +27,55 @@ float signed_distance_sign(float value)
 	return value < 0.0 ? -1.0 : 1.0;
 }
 
-bool is_fast_path_half_res_gi()
+vec3 load_fast_path_diffuse(ivec2 ipos)
 {
-	return global_ubo.pt_num_bounce_rays == 0.5;
+	vec3 diffuse = unpackRGBE(texelFetch(TEX_PT_COLOR_HF, ipos, 0).x) / STORAGE_SCALE_HF;
+	vec3 sun_diff_bypass = unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PONG_HF, ipos, 0).x) / STORAGE_SCALE_HF;
+	return max(diffuse - sun_diff_bypass, vec3(0.0));
 }
 
-bool is_fast_path_traced_row(int y)
+vec3 load_fast_path_specular(ivec2 ipos)
 {
-	return (y & 1) == (global_ubo.current_frame_idx & 1);
+	vec3 specular = unpackRGBE(texelFetch(TEX_PT_COLOR_SPEC, ipos, 0).x) / STORAGE_SCALE_SPEC;
+	vec3 sun_spec_bypass = unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PING_HF, ipos, 0).x) / STORAGE_SCALE_SPEC;
+	return max(specular - sun_spec_bypass, vec3(0.0));
 }
 
-float fast_path_lf_weight(ivec2 sample_pos, float depth_center, float depth_scale, vec3 geo_normal_center)
+vec2 estimate_fast_path_confidence(ivec2 ipos, float view_depth, vec3 normal, vec3 diffuse, vec3 specular, int checkerboard_flags)
 {
-	float sample_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, sample_pos, 0).x;
-	if (abs(sample_depth) >= (PRIMARY_RAY_T_MAX * 0.5))
-		return 0.0;
-
-	vec3 sample_geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, sample_pos, 0).x);
-	float sample_weight = exp(-abs(sample_depth - depth_center) * depth_scale);
-	sample_weight *= pow(max(0.0, dot(geo_normal_center, sample_geo_normal)), 8.0);
-	return sample_weight;
-}
-
-SH load_fast_path_lf(ivec2 ipos)
-{
-	if (!is_fast_path_half_res_gi() || is_fast_path_traced_row(ipos.y))
-		return load_SH(TEX_PT_COLOR_LF_SH, TEX_PT_COLOR_LF_COCG, ipos);
-
-	float depth_center = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
-	if (abs(depth_center) >= (PRIMARY_RAY_T_MAX * 0.5))
-		return init_SH();
+	const ivec2 offsets[4] = {
+		ivec2(-1, 0),
+		ivec2( 1, 0),
+		ivec2( 0,-1),
+		ivec2( 0, 1),
+	};
 
 	float depth_scale = max(texelFetch(TEX_PT_MOTION, ipos, 0).w, 1e-6);
-	vec3 geo_normal_center = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
-
-	SH sum_lf = init_SH();
-	SH fallback_lf = init_SH();
+	float diff_lum_center = luminance(diffuse);
+	float spec_lum_center = luminance(specular);
+	float diff_metric = 0.0;
+	float spec_metric = 0.0;
 	float sum_w = 0.0;
-	bool have_fallback = false;
 
-	for (int offset = -1; offset <= 1; offset += 2)
+	for (int i = 0; i < 4; i++)
 	{
-		int sample_y = ipos.y + offset;
-		if (sample_y < 0 || sample_y >= global_ubo.height || !is_fast_path_traced_row(sample_y))
+		ivec2 sample_pos = ipos + offsets[i];
+		if (sample_pos.x < 0 || sample_pos.y < 0 || sample_pos.x >= global_ubo.current_gpu_slice_width || sample_pos.y >= global_ubo.height)
 			continue;
 
-		ivec2 sample_pos = ivec2(ipos.x, sample_y);
-		SH sample_lf = load_SH(TEX_PT_COLOR_LF_SH, TEX_PT_COLOR_LF_COCG, sample_pos);
-		if (!have_fallback)
-		{
-			fallback_lf = sample_lf;
-			have_fallback = true;
-		}
+		float sample_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, sample_pos, 0).x;
+		if (abs(sample_depth) >= (PRIMARY_RAY_T_MAX * 0.5))
+			continue;
 
-		float sample_weight = fast_path_lf_weight(sample_pos, depth_center, depth_scale, geo_normal_center);
+		vec3 sample_normal = decode_normal(texelFetch(TEX_PT_NORMAL_A, sample_pos, 0).x);
+		float sample_weight = exp(-abs(sample_depth - view_depth) * depth_scale);
+		sample_weight *= pow(max(0.0, dot(normal, sample_normal)), 16.0);
 		if (sample_weight > 0.0)
 		{
-			accumulate_SH(sum_lf, sample_lf, sample_weight);
+			float diff_lum_sample = luminance(load_fast_path_diffuse(sample_pos));
+			float spec_lum_sample = luminance(load_fast_path_specular(sample_pos));
+			diff_metric += abs(diff_lum_sample - diff_lum_center) / (0.05 + max(diff_lum_sample, diff_lum_center)) * sample_weight;
+			spec_metric += abs(spec_lum_sample - spec_lum_center) / (0.05 + max(spec_lum_sample, spec_lum_center)) * sample_weight;
 			sum_w += sample_weight;
 		}
 	}
@@ -91,12 +83,18 @@ SH load_fast_path_lf(ivec2 ipos)
 	if (sum_w > 0.0)
 	{
 		float inv_w = 1.0 / sum_w;
-		sum_lf.shY *= inv_w;
-		sum_lf.CoCg *= inv_w;
-		return sum_lf;
+		diff_metric *= inv_w;
+		spec_metric *= inv_w;
 	}
 
-	return have_fallback ? fallback_lf : init_SH();
+	vec2 confidence = clamp(vec2(1.0) - vec2(diff_metric, spec_metric), vec2(0.05), vec2(1.0));
+	if ((checkerboard_flags & CHECKERBOARD_FLAG_WEAPON) != 0)
+	{
+		float weapon_confidence_floor = clamp(1.0 - global_ubo.flt_grad_weapon, 0.0, 1.0);
+		confidence.y = max(confidence.y, weapon_confidence_floor);
+	}
+
+	return confidence;
 }
 
 void main()
@@ -126,20 +124,13 @@ void main()
 	vec3 sun_diff_bypass = has_surface ? unpackRGBE(texelFetch(TEX_ASVGF_ATROUS_PONG_HF, ipos, 0).x) / STORAGE_SCALE_HF : vec3(0.0);
 	specular = max(specular - sun_spec_bypass, vec3(0.0));
 	diffuse = max(diffuse - sun_diff_bypass, vec3(0.0));
-	if (fast_path && has_surface)
-	{
-		SH indirect_lf = load_fast_path_lf(ipos);
-		indirect_lf.shY /= STORAGE_SCALE_LF;
-		indirect_lf.CoCg /= STORAGE_SCALE_LF;
-		diffuse += project_SH_irradiance(indirect_lf, normal);
-	}
 
 	vec2 confidence = vec2(0.0);
 	if (has_surface)
 	{
 		if (fast_path)
 		{
-			confidence = vec2(1.0);
+			confidence = estimate_fast_path_confidence(ipos, view_depth, normal, diffuse, specular, checkerboard_flags);
 		}
 		else
 		{

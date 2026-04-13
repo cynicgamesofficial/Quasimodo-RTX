@@ -23,8 +23,8 @@ try {
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
     )
 
-    # NRD SDK source root -- required for VKPT_NRD=1
-    $nrdRoot = "D:/quasifix/NRD-4.17.2"
+    # NRD SDK source root -- required for VKPT_NRD=1 (see download-thirdparties.ps1)
+    $nrdRoot = Join-Path $root "Third Parties\NRD"
     if (Test-Path (Join-Path $nrdRoot "CMakeLists.txt")) {
         $cmakeArgs += "-DNRD_ROOT=$nrdRoot"
         Write-DevLog "NRD: using source root $nrdRoot"

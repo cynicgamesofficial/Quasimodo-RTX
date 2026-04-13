@@ -1,10 +1,10 @@
 # dev.ps1 -- Q2RTX developer automation dispatcher
 # Usage: .\dev.ps1 <command>
-# Commands: configure, build, rebuild, clean, clean-build, run, shaders, doctor, submodules
+# Commands: configure, build, rebuild, clean, clean-build, run, shaders, doctor, submodules, thirdparties
 
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet("configure", "build", "rebuild", "clean", "clean-build", "run", "shaders", "doctor", "submodules")]
+    [ValidateSet("configure", "build", "rebuild", "clean", "clean-build", "run", "shaders", "doctor", "submodules", "thirdparties")]
     [string]$Command
 )
 
@@ -19,6 +19,7 @@ $scriptMap = @{
     shaders     = "shaders.ps1"
     doctor      = "doctor.ps1"
     submodules  = "submodules.ps1"
+    thirdparties = "thirdparties.ps1"
 }
 
 $scriptFile = Join-Path $scriptDir $scriptMap[$Command]

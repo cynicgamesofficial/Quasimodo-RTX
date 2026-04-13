@@ -3961,7 +3961,9 @@ R_RenderFrame_RTX(refdef_t *fd)
 #ifdef VKPT_NRD
 			// NRD is only allowed on the ReSTIR path; legacy path stays vanilla ASVGF.
 			int nrd_active = cvar_pt_nrd->integer && cvar_pt_restir_di->integer;
-			if (!fast_path_active)
+			if (fast_path_active)
+				vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, true);
+			else
 				vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, nrd_active != 0);
 #else
 			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, false);
