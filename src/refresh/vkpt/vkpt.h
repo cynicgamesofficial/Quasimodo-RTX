@@ -709,6 +709,7 @@ VkResult vkpt_compositing(VkCommandBuffer cmd_buf);
 VkResult vkpt_interleave(VkCommandBuffer cmd_buf);
 VkResult vkpt_taa(VkCommandBuffer cmd_buf);
 VkResult vkpt_asvgf_gradient_reproject(VkCommandBuffer cmd_buf);
+qboolean vkpt_dlss_active(void);
 
 void vkpt_fsr_init_cvars(void);
 VkResult vkpt_fsr_initialize(void);

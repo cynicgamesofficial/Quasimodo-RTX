@@ -481,10 +481,15 @@ vkpt_interleave(VkCommandBuffer cmd_buf)
 
 	set_current_gpu(cmd_buf, 0);
 
-	// dispatch using the image dimensions, not render dimensions - to clear the unused area with black color
+	VkExtent2D dispatch_extent = qvk.extent_screen_images;
+	if (vkpt_dlss_active())
+		dispatch_extent = qvk.extent_render;
+	
+	// DLSS only samples the render-resolution flat inputs, so the larger output-only tail
+	// does not need a black clear on that path.
 	vkCmdDispatch(cmd_buf,
-		(qvk.extent_screen_images.width + 15) / 16,
-		(qvk.extent_screen_images.height + 15) / 16,
+		(dispatch_extent.width + 15) / 16,
+		(dispatch_extent.height + 15) / 16,
 		1);
 
 	END_PERF_MARKER(cmd_buf, PROFILER_INTERLEAVE);

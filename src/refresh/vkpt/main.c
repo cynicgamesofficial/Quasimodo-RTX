@@ -378,7 +378,7 @@ static streamline_dlss_quality_t vkpt_get_dlss_quality(void)
 	}
 }
 
-static qboolean vkpt_dlss_active(void)
+qboolean vkpt_dlss_active(void)
 {
 	return (vkpt_dlss_requested() && SLDLSS_IsAvailable()) ? qtrue : qfalse;
 }
