@@ -43,6 +43,7 @@ void main()
 	bool has_surface = abs(view_depth) < (PRIMARY_RAY_T_MAX * 0.5);
 	bool is_checkerboarded_surface = bitCount(checkerboard_flags & CHECKERBOARD_FLAG_FIELD_MASK) > 1;
 	bool is_secondary_surface = view_depth < 0.0 || is_checkerboarded_surface;
+	bool fast_path = global_ubo.pt_fast_path != 0.0;
 
 	vec3 normal = has_surface ? decode_normal(packed_normal) : vec3(0.0, 0.0, 1.0);
 	float roughness = has_surface ? metallic_roughness.y : 1.0;
@@ -57,23 +58,30 @@ void main()
 	vec2 confidence = vec2(0.0);
 	if (has_surface)
 	{
-		vec2 grad_pos = (vec2(ipos) + vec2(0.5)) / float(GRAD_DWN) - vec2(0.5);
-		ivec2 grad_base = ivec2(floor(grad_pos));
-		vec2 grad_frac = grad_pos - vec2(grad_base);
+		if (fast_path)
+		{
+			confidence = vec2(1.0);
+		}
+		else
+		{
+			vec2 grad_pos = (vec2(ipos) + vec2(0.5)) / float(GRAD_DWN) - vec2(0.5);
+			ivec2 grad_base = ivec2(floor(grad_pos));
+			vec2 grad_frac = grad_pos - vec2(grad_base);
 
-		ivec2 grad_max = (ivec2(global_ubo.current_gpu_slice_width, global_ubo.height) + GRAD_DWN - 1) / GRAD_DWN - 1;
-		ivec2 g00 = clamp(grad_base,              ivec2(0), grad_max);
-		ivec2 g10 = clamp(grad_base + ivec2(1,0), ivec2(0), grad_max);
-		ivec2 g01 = clamp(grad_base + ivec2(0,1), ivec2(0), grad_max);
-		ivec2 g11 = clamp(grad_base + ivec2(1,1), ivec2(0), grad_max);
+			ivec2 grad_max = (ivec2(global_ubo.current_gpu_slice_width, global_ubo.height) + GRAD_DWN - 1) / GRAD_DWN - 1;
+			ivec2 g00 = clamp(grad_base,              ivec2(0), grad_max);
+			ivec2 g10 = clamp(grad_base + ivec2(1,0), ivec2(0), grad_max);
+			ivec2 g01 = clamp(grad_base + ivec2(0,1), ivec2(0), grad_max);
+			ivec2 g11 = clamp(grad_base + ivec2(1,1), ivec2(0), grad_max);
 
-		vec2 v00 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g00, 0).rg;
-		vec2 v10 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g10, 0).rg;
-		vec2 v01 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g01, 0).rg;
-		vec2 v11 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g11, 0).rg;
+			vec2 v00 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g00, 0).rg;
+			vec2 v10 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g10, 0).rg;
+			vec2 v01 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g01, 0).rg;
+			vec2 v11 = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, g11, 0).rg;
 
-		vec2 filtered_gradients = mix(mix(v00, v10, grad_frac.x), mix(v01, v11, grad_frac.x), grad_frac.y);
-		confidence = clamp(vec2(1.0) - filtered_gradients, vec2(0.0), vec2(1.0));
+			vec2 filtered_gradients = mix(mix(v00, v10, grad_frac.x), mix(v01, v11, grad_frac.x), grad_frac.y);
+			confidence = clamp(vec2(1.0) - filtered_gradients, vec2(0.0), vec2(1.0));
+		}
 	}
 
 	float nrd_view_z = PRIMARY_RAY_T_MAX * 3.0;

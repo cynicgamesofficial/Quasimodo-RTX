@@ -3154,6 +3154,19 @@ typedef struct reference_mode_s
 	int reflect_refract;
 } reference_mode_t;
 
+#ifdef VKPT_NRD
+static bool
+vkpt_fast_path_active(const reference_mode_t *ref_mode)
+{
+	return ref_mode->enable_denoiser &&
+		cvar_pt_fast_path->integer != 0 &&
+		cvar_pt_restir_di->integer != 0 &&
+		cvar_pt_nrd->integer != 0 &&
+		qvk.supports_nrd &&
+		qvk.device_count == 1;
+}
+#endif
+
 static int
 get_accumulation_rendering_framenum(void)
 {
@@ -3712,6 +3725,12 @@ R_RenderFrame_RTX(refdef_t *fd)
 
 	QVKUniformBuffer_t *ubo = &vkpt_refdef.uniform_buffer;
 	prepare_ubo(fd, viewleaf, &ref_mode, sky_matrix, render_world);
+#ifdef VKPT_NRD
+	bool fast_path_active = vkpt_fast_path_active(&ref_mode);
+#else
+	bool fast_path_active = false;
+#endif
+	ubo->pt_fast_path = fast_path_active ? 1.0f : 0.0f;
 	ubo->prev_adapted_luminance = prev_adapted_luminance;
 
 	if (cvar_tm_blend_enable->integer)
@@ -3913,7 +3932,7 @@ R_RenderFrame_RTX(refdef_t *fd)
 			END_PERF_MARKER(trace_cmd_buf, PROFILER_REFLECT_REFRACT_2);
 		}
 
-		if (ref_mode.enable_denoiser)
+		if (ref_mode.enable_denoiser && !fast_path_active)
 		{
 			BEGIN_PERF_MARKER(trace_cmd_buf, PROFILER_ASVGF_GRADIENT_REPROJECT);
 			vkpt_asvgf_gradient_reproject(trace_cmd_buf);
@@ -3942,7 +3961,8 @@ R_RenderFrame_RTX(refdef_t *fd)
 #ifdef VKPT_NRD
 			// NRD is only allowed on the ReSTIR path; legacy path stays vanilla ASVGF.
 			int nrd_active = cvar_pt_nrd->integer && cvar_pt_restir_di->integer;
-			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, nrd_active != 0);
+			if (!fast_path_active)
+				vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, nrd_active != 0);
 #else
 			vkpt_asvgf_filter(post_cmd_buf, cvar_pt_num_bounce_rays->value >= 0.5f, false);
 #endif
@@ -4778,6 +4798,7 @@ R_Init_RTX(bool total)
 	cvar_flt_temporal_lf->changed = temporal_cvar_changed;
 	cvar_flt_temporal_spec->changed = temporal_cvar_changed;
 	cvar_flt_enable->changed = temporal_cvar_changed;
+	cvar_pt_fast_path->changed = temporal_cvar_changed;
 
 	cvar_pt_dof->changed = accumulation_cvar_changed;
 	cvar_pt_aperture->changed = accumulation_cvar_changed;

@@ -91,13 +91,94 @@ SH interpolate_lf(sampler2D img_lf_shY, sampler2D img_lf_CoCg, ivec2 ipos)
 	return sum_lf;
 }
 
+bool is_fast_path_active()
+{
+	return global_ubo.pt_fast_path != 0.0;
+}
+
+bool is_fast_path_half_res_gi()
+{
+	return global_ubo.pt_num_bounce_rays == 0.5;
+}
+
+bool is_fast_path_traced_row(int y)
+{
+	return (y & 1) == (global_ubo.current_frame_idx & 1);
+}
+
+float fast_path_lf_weight(ivec2 sample_pos, float depth_center, float depth_scale, vec3 geo_normal_center)
+{
+	float sample_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, sample_pos, 0).x;
+	if (abs(sample_depth) >= (PRIMARY_RAY_T_MAX * 0.5))
+		return 0.0;
+
+	vec3 sample_geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, sample_pos, 0).x);
+	float sample_weight = exp(-abs(sample_depth - depth_center) * depth_scale);
+	sample_weight *= pow(max(0.0, dot(geo_normal_center, sample_geo_normal)), 8.0);
+	return sample_weight;
+}
+
+SH load_fast_path_lf(ivec2 ipos)
+{
+	if (!is_fast_path_half_res_gi() || is_fast_path_traced_row(ipos.y))
+		return load_SH(TEX_PT_COLOR_LF_SH, TEX_PT_COLOR_LF_COCG, ipos);
+
+	float depth_center = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	if (abs(depth_center) >= (PRIMARY_RAY_T_MAX * 0.5))
+		return init_SH();
+
+	float depth_scale = max(texelFetch(TEX_PT_MOTION, ipos, 0).w, 1e-6);
+	vec3 geo_normal_center = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+
+	SH sum_lf = init_SH();
+	SH fallback_lf = init_SH();
+	float sum_w = 0.0;
+	bool have_fallback = false;
+
+	for (int offset = -1; offset <= 1; offset += 2)
+	{
+		int sample_y = ipos.y + offset;
+		if (sample_y < 0 || sample_y >= global_ubo.height || !is_fast_path_traced_row(sample_y))
+			continue;
+
+		ivec2 sample_pos = ivec2(ipos.x, sample_y);
+		SH sample_lf = load_SH(TEX_PT_COLOR_LF_SH, TEX_PT_COLOR_LF_COCG, sample_pos);
+		if (!have_fallback)
+		{
+			fallback_lf = sample_lf;
+			have_fallback = true;
+		}
+
+		float sample_weight = fast_path_lf_weight(sample_pos, depth_center, depth_scale, geo_normal_center);
+		if (sample_weight > 0.0)
+		{
+			accumulate_SH(sum_lf, sample_lf, sample_weight);
+			sum_w += sample_weight;
+		}
+	}
+
+	if (sum_w > 0.0)
+	{
+		float inv_w = 1.0 / sum_w;
+		sum_lf.shY *= inv_w;
+		sum_lf.CoCg *= inv_w;
+		return sum_lf;
+	}
+
+	return have_fallback ? fallback_lf : init_SH();
+}
+
 void main()
 {
 	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
 	if (ipos.x >= global_ubo.current_gpu_slice_width || ipos.y >= global_ubo.height)
 		return;
 
-	SH filtered_lf = interpolate_lf(TEX_ASVGF_ATROUS_PING_LF_SH, TEX_ASVGF_ATROUS_PING_LF_COCG, ipos);
+	SH filtered_lf;
+	if (is_fast_path_active())
+		filtered_lf = load_fast_path_lf(ipos);
+	else
+		filtered_lf = interpolate_lf(TEX_ASVGF_ATROUS_PING_LF_SH, TEX_ASVGF_ATROUS_PING_LF_COCG, ipos);
 	filtered_lf.shY /= STORAGE_SCALE_LF;
 	filtered_lf.CoCg /= STORAGE_SCALE_LF;
 
@@ -162,7 +243,7 @@ void main()
 	vec3 throughput = texelFetch(TEX_PT_THROUGHPUT, ipos, 0).rgb;
 	vec3 final_color = composite_color(base_color.rgb, metallic, throughput, projected_lf, filtered_hf, filtered_spec, transparent);
 
-	if (global_ubo.flt_show_gradients != 0)
+	if (global_ubo.flt_show_gradients != 0 && !is_fast_path_active())
 	{
 		float gradient_lf = texelFetch(TEX_ASVGF_GRAD_LF_PONG, ipos / GRAD_DWN, 0).r;
 		vec2 gradient_hf_spec = texelFetch(TEX_ASVGF_GRAD_HF_SPEC_PONG, ipos / GRAD_DWN, 0).rg;
