@@ -1,16 +1,17 @@
 # Quasimodo RTX
 
-**Latest additions:** DLSS and NVIDIA Reflex support.
+**Latest additions:** We added **ReSTIR DI** and **NRD**. **NVIDIA DLSS** (super resolution) and **NVIDIA Reflex** (latency reduction).
 
 ## Engine Concept
 
 Quasimodo RTX follows a FutureRetro engine concept: preserve classic Quake II gameplay identity on a GPL codebase while advancing modern engine/runtime capabilities.
 
 Current long-term focus:
-  - keep a stable and open GPL codebase for community collaboration
-  - evolve modern rendering and latency features (including DLSS and Reflex)
-  - improve portability, maintainability, and compatibility for long-term retro engine use
 
+  - keep a stable and open GPL codebase for community collaboration
+   - evolve modern rendering and latency features (including ReSTIR DI, NRD, DLSS, and Reflex)
+  - improve portability, maintainability, and compatibility for long-term retro engine use
+  - 
 ## Original README
 
 **Quake II RTX** is NVIDIA's attempt at implementing a fully functional 
