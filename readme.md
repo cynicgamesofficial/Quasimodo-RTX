@@ -11,7 +11,7 @@ Current long-term focus:
   - keep a stable and open GPL codebase for community collaboration
    - evolve modern rendering and latency features (including ReSTIR DI, NRD, DLSS, and Reflex)
   - improve portability, maintainability, and compatibility for long-term retro engine use
-  - 
+    
 ## Original README
 
 **Quake II RTX** is NVIDIA's attempt at implementing a fully functional 
