@@ -2,6 +2,169 @@
 
 **Latest additions:** We added **ReSTIR DI** and **NRD**. **NVIDIA DLSS** (super resolution) and **NVIDIA Reflex** (latency reduction).
 
+## Build From Scratch (Windows, recommended)
+
+### Prerequisites
+
+Install these tools before building:
+
+- **Git** (required)
+- **Git LFS** (optional; no LFS patterns were detected in this repo, but install if your environment/policy requires it)
+- **CMake** (repo uses CMake as the build system)
+- **Visual Studio 2022** with **Desktop development with C++** (MSVC + MSBuild)
+- **Windows SDK** (installed via Visual Studio workload)
+- **Vulkan SDK** (must set `VULKAN_SDK`; build scripts check this)
+- **PowerShell 5.1+** (required for repository build helper scripts)
+
+### 1) Clone the repository (with submodules)
+
+```bash
+git clone --recursive https://github.com/cynicgamesofficial/Quasimodo-RTX.git
+cd Quasimodo-RTX
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2) Download third-party SDKs
+
+This repository includes a root script: `download-thirdparties.ps1`.
+
+Run it from repo root.
+
+**PowerShell:**
+```powershell
+.\download-thirdparties.ps1
+```
+
+**Command Prompt (cmd.exe):**
+```cmd
+powershell -ExecutionPolicy Bypass -File .\download-thirdparties.ps1
+```
+
+Alternative via dispatcher script (same effect):
+```powershell
+.\dev.ps1 thirdparties
+```
+
+### 3) Generate build system files
+
+After submodules and third-party downloads:
+
+```powershell
+.\dev.ps1 configure
+```
+
+What this does:
+- Configures CMake in `build/`
+- Uses generator: `Visual Studio 17 2022` + `x64`
+- Uses `RelWithDebInfo` configuration by default
+- Passes `NRD_ROOT` automatically if `Third Parties\NRD` exists
+
+### 4) Build the project
+
+**Default scripted build (RelWithDebInfo):**
+```powershell
+.\dev.ps1 build
+```
+
+**Rebuild from clean state (optional):**
+```powershell
+.\dev.ps1 rebuild
+```
+
+### 5) Build Debug / Release configurations (if needed)
+
+The repo is configured with a Visual Studio multi-config generator, so you can build explicit configs with CMake:
+
+```powershell
+cmake --build build --config Debug --parallel
+cmake --build build --config Release --parallel
+```
+
+(`.\dev.ps1 build` currently builds `RelWithDebInfo`.)
+
+### 6) Optional helper commands
+
+```powershell
+.\dev.ps1 doctor      # checks tools/env/submodules/build readiness
+.\dev.ps1 shaders     # builds shader target
+.\dev.ps1 run         # runs q2rtx.exe
+```
+
+### Troubleshooting
+
+#### Missing submodules
+
+Symptoms: configure fails in `extern/*` dependencies.
+
+Fix:
+```bash
+git submodule update --init --recursive
+```
+
+#### Third-party download failures
+
+Symptoms: `download-thirdparties.ps1` errors during download/hash/extract.
+
+Checks:
+- Confirm internet access and GitHub availability.
+- Re-run script from repo root:
+  ```powershell
+  .\download-thirdparties.ps1
+  ```
+- If your policy blocks script execution, run from cmd with:
+  ```cmd
+  powershell -ExecutionPolicy Bypass -File .\download-thirdparties.ps1
+  ```
+
+#### Git LFS issues
+
+No root LFS tracking entries were detected, but if your clone expects LFS:
+```bash
+git lfs install
+git lfs pull
+```
+
+#### CMake / generator problems
+
+Symptoms: configure fails or wrong architecture/toolchain selected.
+
+Fix:
+- Ensure VS 2022 + C++ workload is installed.
+- Re-run:
+  ```powershell
+  .\dev.ps1 configure
+  ```
+- Confirm `build/` was generated for **x64**.
+
+#### Visual Studio / MSBuild toolchain issues
+
+Symptoms: build fails with compiler/MSBuild not found.
+
+Fix:
+- Install/repair **Visual Studio 2022** with **Desktop development with C++**.
+- Ensure Windows SDK is installed.
+- Run readiness check:
+  ```powershell
+  .\dev.ps1 doctor
+  ```
+
+#### Vulkan SDK not detected
+
+Symptoms: configure script reports `VULKAN_SDK` missing.
+
+Fix:
+- Install Vulkan SDK from LunarG.
+- Ensure environment variable `VULKAN_SDK` points to a valid SDK path.
+- Restart terminal and re-run:
+  ```powershell
+  .\dev.ps1 configure
+  ```
+
 ## Engine Concept
 
 Quasimodo RTX follows a FutureRetro engine concept: preserve classic Quake II gameplay identity on a GPL codebase while advancing modern engine/runtime capabilities.
@@ -125,7 +288,7 @@ Note: Linux ppc64le is also known to work though not officially supported.
 * [glslang](https://github.com/KhronosGroup/glslang) (optional, see the `CONFIG_BUILD_GLSLANG` CMake option)
 * [openal-soft](https://github.com/kcat/openal-soft)
 
-## Build Instructions
+## Original Building Guide
 
 ### Clone and submodules
 
