@@ -3932,7 +3932,14 @@ R_RenderFrame_RTX(refdef_t *fd)
 			END_PERF_MARKER(trace_cmd_buf, PROFILER_REFLECT_REFRACT_2);
 		}
 
-		if (ref_mode.enable_denoiser && !fast_path_active)
+		// gradient_reproject must run whenever the denoiser is active, including
+		// fast path.  It writes ASVGF_GRAD_SMPL_POS_A, which is consumed by
+		// GRADIENT_IMAGE to build the temporal HF gradient used as NRD confidence.
+		// Skipping it in fast path left GRAD_SMPL_POS_A stale, causing GRADIENT_IMAGE
+		// to produce garbage GRAD_HF_SPEC_PONG and forcing the fallback to a broken
+		// spatial confidence estimator (which measured single-frame PT noise, not
+		// temporal lighting changes, and collapsed NRD history on every frame).
+		if (ref_mode.enable_denoiser)
 		{
 			BEGIN_PERF_MARKER(trace_cmd_buf, PROFILER_ASVGF_GRADIENT_REPROJECT);
 			vkpt_asvgf_gradient_reproject(trace_cmd_buf);
