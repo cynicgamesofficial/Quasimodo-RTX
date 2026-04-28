@@ -451,59 +451,10 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 			direct_specular);
 	}
 
-	// When ReSTIR DI is active, sky polygons are excluded from the reservoir
-	// (the CDF sampler may pick them, but !is_sky rejects them in initial.comp).
-	// Sky illumination through windows is captured by indirect lighting bounces
-	// instead.  The previous separate get_visible_sky_polygon_illumination() call
-	// was a single-sample legacy estimator whose high variance mixed with the
-	// low-variance reservoir signal, causing firefly flicker in dark areas lit
-	// by sky/sun.  Removing it eliminates that mixed-variance artifact.
-
-    high_freq += direct_diffuse;
-    o_specular += direct_specular;
-	
-	bool suppress_legacy_sun = suppress_sun_for_restir_debug;
-	if(global_ubo.pt_direct_sun_light != 0 && !suppress_legacy_sun)
-	{
-		vec3 direct_sun_diffuse, direct_sun_specular;
-		get_sunlight(
-			cluster_idx,
-			material_id,
-			position,
-			normal,
-			geo_normal,
-			view_direction.xyz,
-			primary_base_reflectivity,
-			primary_specular_factor,
-			primary_roughness,
-			primary_medium,
-			spec_enable_caustics != 0,
-			direct_sun_diffuse,
-			direct_sun_specular,
-			shadow_cull_mask);
-
-		high_freq += direct_sun_diffuse;
-		o_specular += direct_sun_specular;
-		sun_spec_bypass = clamp_output(demodulate_specular(primary_base_reflectivity, direct_sun_specular));
-		sun_diff_bypass = clamp_output(direct_sun_diffuse);
-	}
-
 	// Dynamic lights (particles, explosions, muzzle flashes) are evaluated via
 	// the legacy single-sample estimator when ReSTIR is active.  They lack stable
 	// indices across frames (add_dlights rebuilds from scratch each frame), so
 	// temporal/spatial reuse in the reservoir corrupts their weights.
-	//
-	// NRD bypass: dynamic lights are routed into the sun bypass buffers instead of
-	// the NRD input.  NRD RELAX temporally accumulates its inputs over ~20 frames;
-	// transient lights (muzzle flashes, blaster particles, explosions) that fire for
-	// 1-2 frames and then disappear would otherwise remain in NRD history long after
-	// they vanish.  Because the even and odd checkerboard fields have different spatial
-	// neighbors inside the NRD filter, the two fields accumulate and fade at different
-	// rates, producing the observed per-pixel checkerboard / stripe artifact.
-	//
-	// Routing dynamic lights through the same bypass used for direct sun keeps them
-	// single-frame fresh (like vanilla ASVGF with anti-lag) without touching any
-	// NRD temporal state.  The legacy (no-ReSTIR) path is unchanged.
 	if(global_ubo.pt_restir_di != 0
 		&& global_ubo.pt_direct_dyn_lights > 0
 		&& global_ubo.num_dyn_lights > 0)
@@ -540,16 +491,49 @@ direct_lighting(ivec2 ipos, bool is_odd_checkerboard, out vec3 high_freq, out ve
 				vec3 spec_brdf = GGX_times_NdotL(view_direction.xyz, L_dyn,
 					normal, primary_roughness, primary_base_reflectivity,
 					0.0, primary_specular_factor, F_dyn);
-				// Bypass NRD: add demodulated dynamic specular directly to the
-				// sun-spec bypass buffer so it is re-added in nrd_merge unchanged.
-				sun_spec_bypass += clamp_output(demodulate_specular(primary_base_reflectivity,
-					dyn_radiance * spec_brdf * direct_specular_weight));
+				direct_specular += dyn_radiance * spec_brdf * direct_specular_weight;
 			}
 
 			float NdotL_dyn = max(0.0, dot(normal, L_dyn));
-			// Bypass NRD: add dynamic diffuse directly to the sun-diff bypass buffer.
-			sun_diff_bypass += clamp_output(dyn_radiance * (NdotL_dyn / M_PI) * (vec3(1.0) - F_dyn));
+			direct_diffuse += dyn_radiance * (NdotL_dyn / M_PI) * (vec3(1.0) - F_dyn);
 		}
+	}
+
+	// When ReSTIR DI is active, sky polygons are excluded from the reservoir
+	// (the CDF sampler may pick them, but !is_sky rejects them in initial.comp).
+	// Sky illumination through windows is captured by indirect lighting bounces
+	// instead.  The previous separate get_visible_sky_polygon_illumination() call
+	// was a single-sample legacy estimator whose high variance mixed with the
+	// low-variance reservoir signal, causing firefly flicker in dark areas lit
+	// by sky/sun.  Removing it eliminates that mixed-variance artifact.
+
+    high_freq += direct_diffuse;
+    o_specular += direct_specular;
+	
+	bool suppress_legacy_sun = suppress_sun_for_restir_debug;
+	if(global_ubo.pt_direct_sun_light != 0 && !suppress_legacy_sun)
+	{
+		vec3 direct_sun_diffuse, direct_sun_specular;
+		get_sunlight(
+			cluster_idx,
+			material_id,
+			position,
+			normal,
+			geo_normal,
+			view_direction.xyz,
+			primary_base_reflectivity,
+			primary_specular_factor,
+			primary_roughness,
+			primary_medium,
+			spec_enable_caustics != 0,
+			direct_sun_diffuse,
+			direct_sun_specular,
+			shadow_cull_mask);
+
+		high_freq += direct_sun_diffuse;
+		o_specular += direct_sun_specular;
+		sun_spec_bypass = clamp_output(demodulate_specular(primary_base_reflectivity, direct_sun_specular));
+		sun_diff_bypass = clamp_output(direct_sun_diffuse);
 	}
 
 	o_specular = demodulate_specular(primary_base_reflectivity, o_specular);
