@@ -159,15 +159,23 @@ void main()
 	if (has_surface)
 	{
 		vec2 screen_uv = (vec2(ipos) + vec2(0.5)) / vec2(global_ubo.current_gpu_slice_width, global_ubo.height);
+		// view_depth is negative for reflected/refracted surfaces (by convention from reflect_refract.rgen,
+		// which negates distance_curr for both reflection and refraction paths so that ASVGF filters do not
+		// blur across reflection/refraction boundaries).  NRD expects viewZ to be the un-modified camera-space
+		// Z coordinate of the visible surface, which is always negative for a surface in front of the camera
+		// (camera looks down -Z in view space).  Multiplying by view_z_sign would flip reflected/refracted
+		// pixels to positive viewZ, making them appear to be behind the camera.  NRD then fires disocclusion
+		// on every frame at every glass/opaque boundary (depth difference = ~2*D vs threshold ~0.01*D),
+		// preventing temporal accumulation for glass pixels and producing the per-pixel checkerboard artifact.
+		// Fix: use view_pos.z directly — it is always negative for a visible surface regardless of the
+		// Q2RTX depth-sign convention stored in PT_VIEW_DEPTH_A.
 		float signed_depth_prev = view_depth + motion.z;
-		float view_z_sign = signed_distance_sign(view_depth);
-		float view_z_prev_sign = signed_distance_sign(signed_depth_prev);
 
 		vec3 view_pos = projection_screen_to_view(screen_uv, abs(view_depth), false);
 		vec3 view_pos_prev = projection_screen_to_view(screen_uv + motion.xy, abs(signed_depth_prev), true);
 
-		nrd_view_z = view_pos.z * view_z_sign;
-		nrd_motion = vec3(motion.xy, view_pos_prev.z * view_z_prev_sign - nrd_view_z);
+		nrd_view_z = view_pos.z;
+		nrd_motion = vec3(motion.xy, view_pos_prev.z - nrd_view_z);
 	}
 
 	float disocclusion_mix = 0.0;
