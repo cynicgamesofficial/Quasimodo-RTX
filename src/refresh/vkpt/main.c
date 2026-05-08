@@ -34,6 +34,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "vkpt.h"
 #include "vkpt_swapchain_views.h"
 #include "vkpt_frame_fences.h"
+#include "vkpt_command_pools.h"
 #include "material.h"
 #include "fog.h"
 #include "cameras.h"
@@ -1304,17 +1305,8 @@ create_swapchain(void)
 VkResult
 create_command_pool_and_fences(void)
 {
-	VkCommandPoolCreateInfo cmd_pool_create_info = {
-		.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.queueFamilyIndex = qvk.queue_idx_graphics,
-		.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-	};
-
-	/* command pool and buffers */
-	_VK(vkCreateCommandPool(qvk.device, &cmd_pool_create_info, NULL, &qvk.cmd_buffers_graphics.command_pool));
-	
-	cmd_pool_create_info.queueFamilyIndex = qvk.queue_idx_transfer;
-	_VK(vkCreateCommandPool(qvk.device, &cmd_pool_create_info, NULL, &qvk.cmd_buffers_transfer.command_pool));
+	_VK(vkpt_command_pools_create(qvk.device, qvk.queue_idx_graphics, qvk.queue_idx_transfer,
+		&qvk.cmd_buffers_graphics.command_pool, &qvk.cmd_buffers_transfer.command_pool));
 
 	/* fences and semaphores */
 	for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
@@ -2257,8 +2249,7 @@ destroy_vulkan(void)
 	vkpt_free_command_buffers(&qvk.cmd_buffers_graphics);
 	vkpt_free_command_buffers(&qvk.cmd_buffers_transfer);
 
-	vkDestroyCommandPool(qvk.device, qvk.cmd_buffers_graphics.command_pool, NULL);
-	vkDestroyCommandPool(qvk.device, qvk.cmd_buffers_transfer.command_pool, NULL);
+	vkpt_command_pools_destroy(qvk.device, &qvk.cmd_buffers_graphics.command_pool, &qvk.cmd_buffers_transfer.command_pool);
 
 	vkDestroyDevice(qvk.device,   NULL);
 	_VK(qvkDestroyDebugUtilsMessengerEXT(qvk.instance, qvk.dbg_messenger, NULL));
