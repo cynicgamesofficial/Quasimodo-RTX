@@ -159,6 +159,32 @@ void vkpt_textures_destroy_unused()
 	textures_destroy_unused_set((qvk.frame_counter) % DESTROY_LATENCY);
 }
 
+/* Queue one r_images slot's VkImage / views / memory for deferred teardown (same bucket index as IMG_Unload_RTX). */
+static void textures_queue_tex_slot_for_deferred_destroy(uint32_t index, bool invalidate_descriptors)
+{
+	if (tex_images[index] == VK_NULL_HANDLE)
+		return;
+
+	const uint32_t frame_index = (qvk.frame_counter + MAX_FRAMES_IN_FLIGHT + 1) % DESTROY_LATENCY;
+	UnusedResources *unused_resources = texture_system.unused_resources + frame_index;
+
+	assert(unused_resources->image_num < MAX_RIMAGES);
+	const uint32_t unused_index = unused_resources->image_num++;
+
+	unused_resources->images[unused_index] = tex_images[index];
+	unused_resources->image_memory[unused_index] = tex_image_memory[index];
+	unused_resources->image_views[unused_index] = tex_image_views[index];
+	unused_resources->image_views_mip0[unused_index] = tex_image_views_mip0[index];
+
+	tex_images[index] = VK_NULL_HANDLE;
+	tex_image_views[index] = VK_NULL_HANDLE;
+	tex_image_views_mip0[index] = VK_NULL_HANDLE;
+	tex_upload_frames[index] = 0;
+
+	if (invalidate_descriptors)
+		vkpt_invalidate_texture_descriptors();
+}
+
 static void
 destroy_envmap(void)
 {
@@ -965,25 +991,7 @@ IMG_Unload_RTX(image_t *image)
 
 	const uint32_t index = image - r_images;
 
-	if (tex_images[index])
-	{
-		const uint32_t frame_index = (qvk.frame_counter + MAX_FRAMES_IN_FLIGHT + 1) % DESTROY_LATENCY;
-		UnusedResources* unused_resources = texture_system.unused_resources + frame_index;
-
-		const uint32_t unused_index = unused_resources->image_num++;
-
-		unused_resources->images[unused_index] = tex_images[index];
-		unused_resources->image_memory[unused_index] = tex_image_memory[index];
-		unused_resources->image_views[unused_index] = tex_image_views[index];
-		unused_resources->image_views_mip0[unused_index] = tex_image_views_mip0[index];
-
-		tex_images[index] = VK_NULL_HANDLE;
-		tex_image_views[index] = VK_NULL_HANDLE;
-		tex_image_views_mip0[index] = VK_NULL_HANDLE;
-		tex_upload_frames[index] = 0;
-
-		vkpt_invalidate_texture_descriptors();
-	}
+	textures_queue_tex_slot_for_deferred_destroy(index, true);
 }
 
 void IMG_ReloadAll(void)
@@ -1039,21 +1047,8 @@ void IMG_ReloadAll(void)
 
             image->last_modified = last_modifed; // reset time stamp because load_img doesn't
 
-            // destroy Vk ressources to force vkpt_textures_end_registration
-            // to recreate them next time a frame is drawn
-            if (tex_image_views[i]) {
-                vkDestroyImageView(qvk.device, tex_image_views[i], NULL);
-                tex_image_views[i] = VK_NULL_HANDLE;
-            }
-            if (tex_image_views_mip0[i]) {
-                vkDestroyImageView(qvk.device, tex_image_views_mip0[i], NULL);
-                tex_image_views_mip0[i] = VK_NULL_HANDLE;
-            }
-            if (tex_images[i]) {
-                vkDestroyImage(qvk.device, tex_images[i], NULL);
-                tex_images[i] = VK_NULL_HANDLE;
-                free_device_memory(tex_device_memory_allocator, &tex_image_memory[i]);
-            }
+            /* Defer Vk teardown like IMG_Unload_RTX (do not invalidate descriptors here; previous behavior). */
+            textures_queue_tex_slot_for_deferred_destroy((uint32_t)i, false);
             ++reloaded;
             Com_Printf("Reloaded '%s'\n", image->name);
         }
