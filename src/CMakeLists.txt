@@ -282,6 +282,8 @@ SET(SRC_VKPT
 	refresh/vkpt/freecam.c
 	refresh/vkpt/fsr.c
 	refresh/vkpt/main.c
+	refresh/vkpt/vkpt_swapchain_views.cpp
+	refresh/vkpt/vkpt_frame_fences.cpp
 	refresh/vkpt/material.c
 	refresh/vkpt/matrix.c
 	refresh/vkpt/mgpu.c
@@ -324,6 +326,8 @@ ENDIF()
 
 SET(HEADERS_VKPT
 	refresh/vkpt/vkpt.h
+	refresh/vkpt/vkpt_swapchain_views.h
+	refresh/vkpt/vkpt_frame_fences.h
 	refresh/vkpt/vk_util.h
 	refresh/vkpt/buddy_allocator.h
 	refresh/vkpt/device_memory_allocator.h

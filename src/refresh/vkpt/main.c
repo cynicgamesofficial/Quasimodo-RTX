@@ -32,6 +32,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "refresh/models.h"
 #include "system/hunk.h"
 #include "vkpt.h"
+#include "vkpt_swapchain_views.h"
+#include "vkpt_frame_fences.h"
 #include "material.h"
 #include "fog.h"
 #include "cameras.h"
@@ -1248,34 +1250,17 @@ create_swapchain(void)
 	qvk.swap_chain_images = malloc(qvk.num_swap_chain_images * sizeof(*qvk.swap_chain_images));
 	pfnGetSCI(qvk.device, qvk.swap_chain, &qvk.num_swap_chain_images, qvk.swap_chain_images);
 
-	qvk.swap_chain_image_views = malloc(qvk.num_swap_chain_images * sizeof(*qvk.swap_chain_image_views));
-	for(int i = 0; i < qvk.num_swap_chain_images; i++) {
-		VkImageViewCreateInfo img_create_info = {
-			.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image      = qvk.swap_chain_images[i],
-			.viewType   = VK_IMAGE_VIEW_TYPE_2D,
-			.format     = picked_format.swapchain_view_fmt,
-#if 1
-			.components = {
-				VK_COMPONENT_SWIZZLE_R,
-				VK_COMPONENT_SWIZZLE_G,
-				VK_COMPONENT_SWIZZLE_B,
-				VK_COMPONENT_SWIZZLE_A
-			},
-#endif
-			.subresourceRange = {
-				.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-				.baseMipLevel   = 0,
-				.levelCount     = 1,
-				.baseArrayLayer = 0,
-				.layerCount     = 1
-			}
-		};
+	{
+		VkResult view_res = vkpt_swapchain_views_create(
+			qvk.device,
+			picked_format.swapchain_view_fmt,
+			qvk.num_swap_chain_images,
+			qvk.swap_chain_images);
 
-		if(vkCreateImageView(qvk.device, &img_create_info, NULL, qvk.swap_chain_image_views + i) != VK_SUCCESS) {
+		if (view_res != VK_SUCCESS)
+		{
 			Com_EPrintf("error creating image view!");
 
-			free(qvk.swap_chain_image_views);
 			qvk.swap_chain_image_views = NULL;
 
 			free(qvk.swap_chain_images);
@@ -1284,6 +1269,10 @@ create_swapchain(void)
 			qvk.num_swap_chain_images = 0;
 			return 1;
 		}
+
+		/* Borrowed pointer: storage owned by vkpt_swapchain_views; valid until destroy_swapchain(). */
+		qvk.swap_chain_image_views = vkpt_swapchain_views_data();
+		assert(vkpt_swapchain_views_count() == qvk.num_swap_chain_images);
 	}
 
 	VkCommandBuffer cmd_buf = vkpt_begin_command_buffer(&qvk.cmd_buffers_graphics);
@@ -1350,14 +1339,10 @@ create_command_pool_and_fences(void)
 		}
 	}
 
-	VkFenceCreateInfo fence_info = {
-		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = VK_FENCE_CREATE_SIGNALED_BIT, /* fence's initial state set to be signaled
-												  to make program not hang */
-	};
-	for(int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_VK(vkCreateFence(qvk.device, &fence_info, NULL, qvk.fences_frame_sync + i));
-		ATTACH_LABEL_VARIABLE(qvk.fences_frame_sync[i], FENCE);
+	_VK(vkpt_frame_fences_create(qvk.device, qvk.fences_frame_sync, MAX_FRAMES_IN_FLIGHT));
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		if (qvk.fences_frame_sync[i] != VK_NULL_HANDLE)
+			ATTACH_LABEL_VARIABLE(qvk.fences_frame_sync[i], FENCE);
 	}
 
 	return VK_SUCCESS;
@@ -2223,11 +2208,7 @@ vkpt_destroy_shader_modules()
 VkResult
 destroy_swapchain(void)
 {
-	for(int i = 0; i < qvk.num_swap_chain_images; i++) {
-		vkDestroyImageView  (qvk.device, qvk.swap_chain_image_views[i], NULL);
-		qvk.swap_chain_image_views[i] = VK_NULL_HANDLE;
-	}
-	free(qvk.swap_chain_image_views);
+	vkpt_swapchain_views_destroy();
 	qvk.swap_chain_image_views = NULL;
 
 	free(qvk.swap_chain_images);
@@ -2271,9 +2252,7 @@ destroy_vulkan(void)
 		}
 	}
 
-	for(int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		vkDestroyFence(qvk.device, qvk.fences_frame_sync[i], NULL);
-	}
+	vkpt_frame_fences_destroy(qvk.device, qvk.fences_frame_sync, MAX_FRAMES_IN_FLIGHT);
 
 	vkpt_free_command_buffers(&qvk.cmd_buffers_graphics);
 	vkpt_free_command_buffers(&qvk.cmd_buffers_transfer);
