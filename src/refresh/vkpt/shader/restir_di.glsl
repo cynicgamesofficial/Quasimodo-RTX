@@ -63,6 +63,26 @@ with this program; if not, write to the Free Software Foundation, Inc.,
  */
 
 #define RESTIR_M_CAP 20
+
+/*
+ * Numerical-stability guards for the RIS estimator.
+ *
+ * RESTIR_MIN_TARGET_PDF: minimum value of the reservoir's target PDF below
+ * which the unbiased estimator W = weightSum / (M * targetPdf) is treated as
+ * invalid and zeroed. Without this guard, vanishingly small target PDFs (e.g.
+ * on highly glossy surfaces, where the Phong target lobe collapses to a near
+ * delta) make W explode and propagate as fireflies through temporal/spatial
+ * reuse.
+ *
+ * RESTIR_W_CAP: upper bound on the propagated W of a neighbour/previous
+ * reservoir before it is used to weight a combine. This is *not* a clamp on
+ * final shading; it only prevents a single anomalous W from re-entering the
+ * stream and amplifying further. Conservative enough not to flatten valid
+ * highlights from area/sphere lights at typical sampling densities.
+ */
+#define RESTIR_MIN_TARGET_PDF 1e-6
+#define RESTIR_W_CAP          1.0e4
+
 #define RESTIR_LIGHT_FLAG_DYNAMIC (1u << 13)
 #define RESTIR_LIGHT_FLAG_SUN     (1u << 14)
 
@@ -104,6 +124,16 @@ reservoir_unpack(uvec4 packed)
 	r.targetPdf = uintBitsToFloat(packed.y);
 	r.M         = packed.z;
 	r.W         = uintBitsToFloat(packed.w);
+
+	/* Defensive sanitize: a previous frame, an unrecorded gradient pixel, or
+	 * uninitialised image memory can leave NaN / INF / negative bit patterns
+	 * in the W channel. Treat those as "no contribution" so they cannot reach
+	 * shading or seed a new combine. */
+	if(isnan(r.W) || isinf(r.W) || r.W < 0.0)
+		r.W = 0.0;
+	if(isnan(r.targetPdf) || isinf(r.targetPdf) || r.targetPdf < 0.0)
+		r.targetPdf = 0.0;
+
 	return r;
 }
 
@@ -153,7 +183,24 @@ void
 reservoir_combine(inout Reservoir a, inout float weightSumA, Reservoir b, float targetPdf_b_at_a, float rng,
 	vec3 prev_sample_pos, inout vec3 stored_sample_pos)
 {
-	float b_weight = targetPdf_b_at_a * b.W * float(b.M);
+	/* Clamp the propagated reservoir weight before it re-enters the stream.
+	 * NaN / INF / negative values are treated as zero (cannot win the coin
+	 * flip below), and a finite RESTIR_W_CAP prevents a single anomalous W
+	 * from being amplified further by targetPdf_b_at_a * b.M. */
+	float bW = b.W;
+	if(isnan(bW) || isinf(bW) || bW < 0.0)
+		bW = 0.0;
+	bW = min(bW, RESTIR_W_CAP);
+
+	float b_weight = targetPdf_b_at_a * bW * float(b.M);
+
+	/* Reject the contribution outright if the combined weight is non-finite;
+	 * accumulating it into weightSumA would poison the running sum. */
+	if(isnan(b_weight) || isinf(b_weight) || b_weight <= 0.0)
+	{
+		a.M += b.M;
+		return;
+	}
 
 	weightSumA += b_weight;
 	a.M += b.M;
@@ -170,14 +217,33 @@ reservoir_combine(inout Reservoir a, inout float weightSumA, Reservoir b, float 
 /*
  * Finalize a reservoir after all insertions or combinations.
  * Computes the unbiased contribution weight W.
+ *
+ * Numerical safety:
+ *   - The division is gated on targetPdf >= RESTIR_MIN_TARGET_PDF to avoid
+ *     producing astronomically large W values when the target function has
+ *     collapsed to a near-zero lobe (e.g. highly glossy surfaces).
+ *   - A non-finite weightSum or a NaN / INF / negative result is treated as
+ *     "no contribution" so that invalid weights cannot survive into shading
+ *     or be re-read by a later combine.
  */
 void
 reservoir_finalize(inout Reservoir r, float weightSum)
 {
-	if(r.targetPdf > 0.0 && r.M > 0)
+	if(r.targetPdf >= RESTIR_MIN_TARGET_PDF
+	   && r.M > 0
+	   && weightSum > 0.0
+	   && !isnan(weightSum)
+	   && !isinf(weightSum))
+	{
 		r.W = weightSum / (float(r.M) * r.targetPdf);
+
+		if(isnan(r.W) || isinf(r.W) || r.W < 0.0)
+			r.W = 0.0;
+	}
 	else
+	{
 		r.W = 0.0;
+	}
 }
 
 /*

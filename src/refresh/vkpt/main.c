@@ -535,6 +535,28 @@ static int restir_di_compute_scale_marker(void)
 static void restir_di_request_reset(uint32_t reason_bits)
 {
 	restir_di_history.pending_reset_bits |= reason_bits;
+
+	/* Force the downstream temporal denoisers (ASVGF / NRD) to drop history
+	 * whenever a real content or dimensional discontinuity invalidates the
+	 * ReSTIR reservoirs. RESTIR_DI_RESET_BUMP_GENERATION_MASK already enumerates
+	 * the cases where ReSTIR bumps its history generation: map load, swapchain
+	 * resize, render-extent / scale change, ReSTIR / direct-light cvar toggles,
+	 * polygon light-table rebuild, dlight topology change, and camera cut.
+	 *
+	 * Without this propagation, NRD would stay in CONTINUE accumulation across
+	 * those discontinuities, producing lingering radial / checkerboard smear
+	 * from history of the previous map / extent / light topology. The softer
+	 * RESTIR_DI_RESET_NON_WORLD_FRAME and RESTIR_DI_RESET_INVALID_MOTION_HISTORY
+	 * bits are intentionally excluded here; they are handled by the existing
+	 * per-frame logic and clearing temporal_frame_valid for them would be too
+	 * aggressive (full ASVGF history loss every gradient pixel / menu frame). */
+	if ((reason_bits & RESTIR_DI_RESET_BUMP_GENERATION_MASK) != 0u)
+	{
+		temporal_frame_valid = false;
+#ifdef VKPT_NRD
+		nrd_reset_pending = true;
+#endif
+	}
 }
 
 static void restir_di_detect_extent_and_scale_resets(void)

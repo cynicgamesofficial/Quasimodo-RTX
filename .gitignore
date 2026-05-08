@@ -82,3 +82,7 @@ streamline/**
 sl.common.json
 sl.imgui.json
 sl.reflex.json
+
+# Ignore RTXDI third-party folder.
+Third Parties/RTXDI/
+Third Parties/RTXDI/**
