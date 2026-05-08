@@ -1,0 +1,20 @@
+---
+description: RmlUi clean porting guardrails
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Workspace Porting Rules
+
+- Primary workspace is `D:\TERRAINO\Quasimodo-RTX`.
+- Reference GUI source is `D:\TERRAINO\experimental gui`.
+- Use the reference project only for analysis and clean, intentional porting.
+- Never blindly copy code; understand integration points and ownership first.
+- Do not modify path tracer or RTX path tracing systems unless integration dependency is proven.
+- Avoid local absolute paths in source, CMake, scripts, configs, RML, RCSS, and asset loading.
+- Keep repository changes portable and buildable on another machine.
+- Do not introduce external game names in commits, comments, logs, docs, debug labels, UI strings, or rules.
+- Prefer small, reviewable changes with clear boundaries.
+- Check `git diff` before and after edits.
+- Build and smoke test when feasible before finalizing.

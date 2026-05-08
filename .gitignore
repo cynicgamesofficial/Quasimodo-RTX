@@ -55,3 +55,30 @@ baseq2/**/*.txt
 !baseq2/maps/sky/*.txt
 !baseq2/ui/fonts/*.txt
 !baseq2/pics/flashlight_profile.png
+
+# --- Project-specific vendored dependency rules ---
+# These folders must be committed completely, even if their files match global ignore patterns above.
+!Third Parties/
+!Third Parties/freetype/
+!Third Parties/freetype/**
+!Third Parties/lunasvg/
+!Third Parties/lunasvg/**
+!Third Parties/RmlUi/
+!Third Parties/RmlUi/**
+
+# Keep the whole UI folder tracked as-is.
+!baseq2/ui/
+!baseq2/ui/**
+
+# These third-party folders must stay fully ignored.
+Third Parties/NRD/
+Third Parties/NRD/**
+Third Parties/NVIDIA/
+Third Parties/NVIDIA/**
+
+# Ignore the entire Streamline SDK folder.
+streamline/
+streamline/**
+sl.common.json
+sl.imgui.json
+sl.reflex.json
