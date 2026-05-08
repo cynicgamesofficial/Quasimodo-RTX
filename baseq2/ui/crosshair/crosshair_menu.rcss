@@ -1,0 +1,169 @@
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0px;
+    font-family: Rajdhani;
+    font-size: 16px;
+    color: #ffffff;
+}
+
+/* #ch-menu is the full-screen flex centering container.
+   Flex centering is used instead of transform so hit-testing stays correct. */
+#ch-menu {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+}
+
+#ch-menu-inner {
+    position: relative;
+    width: 1060px;
+    min-width: 960px;
+    max-width: 90%;
+    max-height: 92%;
+    padding: 32px 38px 34px;
+    overflow-y: auto;
+    border-width: 1px;
+    border-color: rgba(74, 222, 128, 0.20);
+    background-color: rgba(10, 14, 20, 0.99);
+}
+
+#ch-menu-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0px 0px 16px;
+}
+
+#ch-menu-title {
+    font-size: 20px;
+    font-weight: bold;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(74, 222, 128, 0.88);
+}
+
+#ch-preview-box {
+    height: 220px;
+    position: relative;
+    background-color: rgba(0, 0, 0, 0.58);
+    margin-bottom: 18px;
+}
+
+#ch-preview-label {
+    position: absolute;
+    top: 7px;
+    left: 10px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.60);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+}
+
+#ch-preview-inner {
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 100%;
+}
+
+.pv-line {
+    position: absolute;
+    background-color: #ffffff;
+}
+
+.pv-dot {
+    position: absolute;
+    background-color: #ffffff;
+}
+
+.pv-circle {
+    position: absolute;
+    background-color: transparent;
+    border-color: #ffffff;
+    border-width: 1px;
+}
+
+.ch-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 10px 18px;
+    gap: 12px;
+}
+
+.ch-label {
+    width: 240px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 21px;
+    font-weight: bold;
+}
+
+.ch-val {
+    width: 92px;
+    color: rgba(255, 255, 255, 0.98);
+    font-size: 20px;
+    font-weight: bold;
+    text-align: center;
+}
+
+.ch-val.wide {
+    width: 240px;
+}
+
+.ch-section-label {
+    padding: 18px 18px 8px;
+    color: rgba(74, 222, 128, 0.88);
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+#ch-colour-swatch {
+    height: 6px;
+    margin: 2px 16px 8px;
+    background-color: #ffffff;
+}
+
+#ch-code-text {
+    margin: 4px 16px 10px;
+    padding: 10px 12px;
+    background-color: rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.90);
+    font-family: Rajdhani;
+    font-size: 15px;
+}
+
+#ch-menu-footer {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 18px 0px 0px;
+}
+
+#ch-menu-inner button {
+    width: auto;
+    min-width: 48px;
+    min-height: 48px;
+    margin-top: 0px;
+    margin-bottom: 0px;
+    padding: 8px 14px;
+    background-color: rgba(255, 255, 255, 0.16);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+    font-family: Rajdhani;
+    font-size: 18px;
+    text-transform: uppercase;
+}
+
+#ch-menu-inner button:hover {
+    background-color: rgba(74, 222, 128, 0.25);
+    border-color: rgba(74, 222, 128, 0.60);
+    color: #ffffff;
+}

@@ -56,7 +56,6 @@ end
 
 background black
 font conchars
-cursor ch1
 weapon w_railgun.md2
 
 color normal #0f90eb64
@@ -213,6 +212,8 @@ begin developer
         pairs "multi-gpu support" sli "disabled" 0 "when available" 1
         pairs "ray tracing API" ray_tracing_api "automatic selection" "auto" "prefer KHR_ray_query" "query"  "prefer KHR_ray_tracing_pipeline" "pipeline"
         toggle "GPU profiler" profiler
+        toggle --status "development builds only; requires game restart; loads NVIDIA Streamline ImGUI debug panels when available" \
+            "NVIDIA Streamline Debug Overlay" r_streamline_imgui
         blank
         toggle "SVGF gradient overlay" flt_show_gradients
         pairs "tone mapping debug" tm_debug "Off" 0 "histogram" 1 "curve" 2
@@ -334,6 +335,7 @@ begin screen
     range -p -f "%.0f%%" "HUD opacity" scr_alpha 0 1
     range -p -f "%.0f%%" "console opacity" con_alpha 0 1
     pairs "HUD scale" scr_scale auto 0 1x 1 2x 2 4x 4
+    range -f "%.1fx" "RmlUi HUD scale" ui_rml_hud_scale 0.5 6.0 0.1
     pairs "console scale" con_scale auto 0 1x 1 2x 2 4x 4
     pairs "menu scale" ui_scale auto 0 1x 1 2x 2 4x 4
     blank

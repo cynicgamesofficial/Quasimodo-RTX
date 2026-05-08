@@ -1,0 +1,21 @@
+<rml>
+<head>
+    <link type="text/rcss" href="styles/common.rcss"/>
+    <link type="text/rcss" href="styles/menu.rcss"/>
+    <title>Developer</title>
+</head>
+<body class="menu-root">
+    <div class="menu-shell">
+        <div class="brand small">DEVELOPER</div>
+        <button data-command="rmlsettings">Open Settings</button>
+        <button data-command="rmlmenu video">Graphics Settings</button>
+        <button data-command="toggle pt_restir_di">Toggle ReSTIR DI</button>
+        <button data-command="toggle pt_restir_di_spatial">Toggle ReSTIR Spatial</button>
+        <button data-command="toggle pt_enable_nodraw">Toggle NoDraw Surfaces</button>
+        <button data-command="toggle r_showtris">Toggle Triangle Debug</button>
+        <button data-command="toggle ui_rmlui_debug">Toggle RmlUi Debug Log</button>
+        <button data-command="ui_rmlui_reload">Reload RmlUi</button>
+        <button data-command="rmlback">Back</button>
+    </div>
+</body>
+</rml>

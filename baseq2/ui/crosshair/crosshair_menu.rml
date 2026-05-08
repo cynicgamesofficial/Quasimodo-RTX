@@ -1,0 +1,70 @@
+<rml>
+<head>
+    <link type="text/rcss" href="../styles/common.rcss"/>
+    <link type="text/rcss" href="../styles/menu.rcss"/>
+    <link type="text/rcss" href="crosshair_menu.rcss"/>
+</head>
+<body>
+<div id="ch-menu" class="menu-root">
+    <div id="ch-menu-inner">
+        <div class="brand small">CROSSHAIR</div>
+        <div class="subtitle">QUASIMODO RTX</div>
+        <div class="menu-rule"></div>
+        <div id="ch-menu-header">
+            <span id="ch-menu-title">Editor</span>
+            <button data-ch-action="close">Back</button>
+        </div>
+
+        <div id="ch-preview-box">
+            <div id="ch-preview-label">Preview</div>
+            <div id="ch-preview-inner">
+                <div id="pv-line-t" class="pv-line"></div>
+                <div id="pv-line-b" class="pv-line"></div>
+                <div id="pv-line-l" class="pv-line"></div>
+                <div id="pv-line-r" class="pv-line"></div>
+                <div id="pv-dot" class="pv-dot"></div>
+                <div id="pv-circle" class="pv-circle"></div>
+            </div>
+        </div>
+
+        <div class="ch-row">
+            <span class="ch-label">Style</span>
+            <button data-ch-action="style_prev">&lt;</button>
+            <span id="val-style" class="ch-val wide">Classic</span>
+            <button data-ch-action="style_next">&gt;</button>
+        </div>
+        <div class="ch-row"><span class="ch-label">Dynamic</span><button data-ch-action="dynamic" id="val-dynamic">Off</button></div>
+        <div class="ch-row"><span class="ch-label">Dot</span><button data-ch-action="dot" id="val-dot">Off</button></div>
+        <div class="ch-row"><span class="ch-label">Outline</span><button data-ch-action="outline" id="val-outline">Off</button></div>
+        <div class="ch-row"><span class="ch-label">T-Style</span><button data-ch-action="tstyle" id="val-tstyle">Off</button></div>
+
+        <div class="ch-row"><span class="ch-label">Size</span><button data-ch-action="size_dec">-</button><span id="val-size" class="ch-val">5</span><button data-ch-action="size_inc">+</button></div>
+        <div class="ch-row"><span class="ch-label">Thickness</span><button data-ch-action="thickness_dec">-</button><span id="val-thickness" class="ch-val">1</span><button data-ch-action="thickness_inc">+</button></div>
+        <div class="ch-row"><span class="ch-label">Gap</span><button data-ch-action="gap_dec">-</button><span id="val-gap" class="ch-val">3</span><button data-ch-action="gap_inc">+</button></div>
+        <div class="ch-row"><span class="ch-label">Outline Size</span><button data-ch-action="outline_size_dec">-</button><span id="val-outline-size" class="ch-val">0</span><button data-ch-action="outline_size_inc">+</button></div>
+        <div class="ch-row"><span class="ch-label">Opacity</span><button data-ch-action="opacity_dec">-</button><span id="val-opacity" class="ch-val">85</span><button data-ch-action="opacity_inc">+</button></div>
+
+        <div class="ch-section-label">Colour</div>
+        <div class="ch-row"><span class="ch-label">Red</span><button data-ch-action="r_dec">-</button><span id="val-r" class="ch-val">255</span><button data-ch-action="r_inc">+</button></div>
+        <div class="ch-row"><span class="ch-label">Green</span><button data-ch-action="g_dec">-</button><span id="val-g" class="ch-val">255</span><button data-ch-action="g_inc">+</button></div>
+        <div class="ch-row"><span class="ch-label">Blue</span><button data-ch-action="b_dec">-</button><span id="val-b" class="ch-val">255</span><button data-ch-action="b_inc">+</button></div>
+        <div id="ch-colour-swatch"></div>
+
+        <div id="ch-dyn-section">
+            <div class="ch-section-label">Dynamic Settings</div>
+            <div class="ch-row"><span class="ch-label">Move Scale</span><button data-ch-action="dmove_dec">-</button><span id="val-dmove" class="ch-val">2.0</span><button data-ch-action="dmove_inc">+</button></div>
+            <div class="ch-row"><span class="ch-label">Shoot Scale</span><button data-ch-action="dshoot_dec">-</button><span id="val-dshoot" class="ch-val">4.0</span><button data-ch-action="dshoot_inc">+</button></div>
+            <div class="ch-row"><span class="ch-label">Recovery</span><button data-ch-action="drec_dec">-</button><span id="val-drec" class="ch-val">8</span><button data-ch-action="drec_inc">+</button></div>
+        </div>
+
+        <div class="ch-section-label">Crosshair Code</div>
+        <div id="ch-code-text">0|0|1|0|0|5|1|3|0|85|255|255|255|20|40|8</div>
+
+        <div id="ch-menu-footer">
+            <button data-ch-action="reset">Reset</button>
+            <button data-ch-action="apply">Apply</button>
+        </div>
+    </div>
+</div>
+</body>
+</rml>

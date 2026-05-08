@@ -1,0 +1,45 @@
+<rml>
+<head>
+    <link type="text/rcss" href="intro.rcss"/>
+</head>
+<body>
+    <div id="intro">
+        <div id="bg-layer"></div>
+        <div id="scanlines"></div>
+
+        <div id="stage-cynic" class="stage">
+            <div id="cynic-text">
+                <div id="cynic-label">CYNIC GAMES</div>
+            </div>
+            <div id="cynic-sub">PRESENTS</div>
+        </div>
+
+        <div id="stage-engine" class="stage">
+            <div id="engine-lockup">
+                <div id="engine-logo-wrap">
+                    <div id="engine-logo-halo"></div>
+                    <svg id="engine-logo-echo-a" class="logo engine echo" src="quasimodo-logo.svg"></svg>
+                    <svg id="engine-logo-echo-b" class="logo engine echo" src="quasimodo-logo.svg"></svg>
+                    <svg id="engine-logo" class="logo engine" src="quasimodo-logo.svg"></svg>
+                    <div id="engine-logo-sheen"></div>
+                </div>
+                <div id="engine-transversal-line"></div>
+                <div id="engine-title-wrap">
+                    <div id="engine-title">
+                        <div id="engine-title-main">QUASIMODO</div>
+                        <div id="engine-title-gap"></div>
+                        <div id="engine-title-rtx">RTX</div>
+                    </div>
+                    <div id="engine-mask"></div>
+                </div>
+                <div id="engine-sub">PATH TRACED VULKAN RTX</div>
+                <div id="engine-ver">v0.1.0 QUASIMODO ENGINE</div>
+            </div>
+        </div>
+
+        <div id="stage-done" class="stage">
+            <div id="press-key">PRESS ANY KEY TO CONTINUE</div>
+        </div>
+    </div>
+</body>
+</rml>

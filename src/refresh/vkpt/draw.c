@@ -878,6 +878,14 @@ R_DrawStretchPic_RTX(int x, int y, int w, int h, qhandle_t pic)
 }
 
 void
+R_DrawStretchPicUV_RTX(int x, int y, int w, int h, float s1, float t1, float s2, float t2, uint32_t color, qhandle_t pic)
+{
+	if(!w || !h)
+		return;
+	enqueue_stretch_pic(x, y, w, h, s1, t1, s2, t2, color, pic ? pic : TEXNUM_WHITE);
+}
+
+void
 R_DrawPic_RTX(int x, int y, qhandle_t pic)
 {
 	image_t *image = IMG_ForHandle(pic);

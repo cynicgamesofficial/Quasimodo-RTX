@@ -911,6 +911,7 @@ void CL_BubbleTrail(const vec3_t start, const vec3_t end);
 void CL_FlagTrail(const vec3_t start, const vec3_t end, int color);
 void CL_MuzzleFlash(void);
 void CL_MuzzleFlash2(void);
+extern qboolean cl_crosshair_fired;
 void CL_TeleporterParticles(const vec3_t org);
 void CL_TeleportParticles(const vec3_t org);
 void CL_ParticleEffect(const vec3_t org, const vec3_t dir, int color, int count);

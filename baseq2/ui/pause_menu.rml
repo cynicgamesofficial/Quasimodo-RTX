@@ -1,0 +1,25 @@
+<rml>
+<head>
+    <link type="text/rcss" href="styles/common.rcss"/>
+    <link type="text/rcss" href="styles/menu.rcss"/>
+    <title>Paused</title>
+</head>
+<body class="pause-root">
+    <div class="pause-panel">
+        <div class="brand small">PAUSED</div>
+        <div class="subtitle">QUASIMODO RTX</div>
+        <div class="menu-rule"></div>
+
+        <button data-command="forcemenuoff">Resume</button>
+        <button data-command="pushmenu savegame">Save Game</button>
+        <button data-command="pushmenu loadgame">Load Game</button>
+
+        <div class="menu-separator"></div>
+        <button data-command="rmlsettings">Settings</button>
+
+        <div class="menu-separator"></div>
+        <button data-command="disconnect">Quit to Main Menu</button>
+        <button data-command="quit">Quit Game</button>
+    </div>
+</body>
+</rml>

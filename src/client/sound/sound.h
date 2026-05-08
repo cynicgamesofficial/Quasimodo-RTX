@@ -179,3 +179,8 @@ float S_GetEntityLoopVolume(const centity_state_t *ent);
 float S_GetEntityLoopDistMult(const centity_state_t *ent);
 
 bool OGG_Load(sizebuf_t *sz);
+void OGG_LoadTrackList(void);
+void OGG_Play(void);
+void OGG_Stop(void);
+bool OGG_PlayMenuTrack(const char *track);
+void OGG_StopMenuTrack(void);

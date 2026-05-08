@@ -89,6 +89,8 @@ enum { MAX_NUM_OGGTRACKS = 128 };
 static void     **tracklist;
 static int      trackcount;
 static int      trackindex;
+static bool     ogg_loop_track_active;
+static char     ogg_loop_track[MAX_QPATH];
 
 
 struct {
@@ -237,18 +239,34 @@ static void get_track_path(char* buf, size_t size, int track)
 	}
 }
 
+static void get_named_track_path(char *buf, size_t size, const char *track)
+{
+	Q_snprintf(buf, size, "%s/%s/music/%s.ogg", sys_basedir->string, *fs_game->string ? fs_game->string : BASEGAME, track);
+
+	if (*fs_game->string && !Sys_IsFile(buf))
+		Q_snprintf(buf, size, "%s/" BASEGAME "/music/%s.ogg", sys_basedir->string, track);
+}
+
 /*
  * play the ogg file that corresponds to the CD track with the given number
  */
-static void
+static bool
 OGG_PlayTrack(const char* track_str)
 {
-	if (s_started == SS_NOT)
-		return;
+	if (!track_str)
+		track_str = "";
 
-	if(trackcount == 0)
+	if (s_started == SS_NOT)
+		return false;
+
+	const bool named_track = *track_str && strcmp(track_str, "0") && !COM_IsUint(track_str);
+
+	if(!named_track && trackcount == 0)
+		OGG_LoadTrackList();
+
+	if(!named_track && trackcount == 0)
 	{
-		return; // no ogg files at all, ignore this silently instead of printing warnings all the time
+		return false; // no ogg files at all, ignore this silently instead of printing warnings all the time
 	}
 
 	// Track 0 means "stop music".
@@ -257,7 +275,7 @@ OGG_PlayTrack(const char* track_str)
 		if(ogg_ignoretrack0->value == 0)
 		{
 			OGG_Stop();
-			return;
+			return true;
 		}
 
 		// Special case: If ogg_ignoretrack0 is 0 we stopped the music (see above)
@@ -271,14 +289,14 @@ OGG_PlayTrack(const char* track_str)
 		// shuffle a random track (see below).
 		if (*ogg.path)
 		{
-			return;
+			return true;
 		}
 	}
 
 	char current_path[MAX_OSPATH];
 	Q_strlcpy(current_path, ogg.path, sizeof(current_path));
 	// Player has requested shuffle playback.
-	if((!*track_str || !strcmp(track_str, "0")) || (ogg_shuffle->integer && trackcount))
+	if(!named_track && ((!*track_str || !strcmp(track_str, "0")) || (ogg_shuffle->integer && trackcount)))
 	{
 		if (trackindex == 0)
 			shuffle();
@@ -288,7 +306,7 @@ OGG_PlayTrack(const char* track_str)
 		int trackNo = Q_atoi(track_str);
 		get_track_path(ogg.path, sizeof(ogg.path), trackNo);
 	 } else {
-		Q_snprintf(ogg.path, sizeof(ogg.path), "%s/%s/music/%s.ogg", sys_basedir->string, *fs_game->string ? fs_game->string : BASEGAME, track_str);
+		get_named_track_path(ogg.path, sizeof(ogg.path), track_str);
 	}
 
 	/* Check running music. */
@@ -296,7 +314,7 @@ OGG_PlayTrack(const char* track_str)
 	{
 		if (strcmp(current_path, ogg.path) == 0)
 		{
-			return;
+			return true;
 		}
 		else
 		{
@@ -305,12 +323,16 @@ OGG_PlayTrack(const char* track_str)
 	}
 
     ogg_play();
+	return ogg.initialized;
 }
 
 void
 OGG_Play(void)
 {
-	OGG_PlayTrack(cl.configstrings[CS_CDTRACK]);
+	if (ogg_loop_track_active && ogg_loop_track[0])
+		OGG_PlayTrack(ogg_loop_track);
+	else
+		OGG_PlayTrack(cl.configstrings[CS_CDTRACK]);
 }
 
 /*
@@ -328,6 +350,34 @@ OGG_Stop(void)
 
 	if (s_started)
 		s_api.drop_raw_samples();
+}
+
+bool
+OGG_PlayMenuTrack(const char *track)
+{
+	if (!track || !track[0])
+		return false;
+
+	Q_strlcpy(ogg_loop_track, track, sizeof(ogg_loop_track));
+	ogg_loop_track_active = true;
+
+	if (OGG_PlayTrack(track))
+		return true;
+
+	ogg_loop_track_active = false;
+	ogg_loop_track[0] = 0;
+	return false;
+}
+
+void
+OGG_StopMenuTrack(void)
+{
+	if (!ogg_loop_track_active)
+		return;
+
+	ogg_loop_track_active = false;
+	ogg_loop_track[0] = 0;
+	OGG_Stop();
 }
 
 /*
@@ -703,6 +753,12 @@ OGG_Cmd_f(void)
 void
 OGG_SaveState(void)
 {
+	if (ogg_loop_track_active)
+	{
+		ogg_saved_state.saved = false;
+		return;
+	}
+
 	if (ogg_status != PLAY)
 	{
 		ogg_saved_state.saved = false;
@@ -782,6 +838,8 @@ OGG_Init(void)
 	trackindex = -1;
 	ogg_numsamples = 0;
 	ogg_status = STOP;
+	ogg_loop_track_active = false;
+	ogg_loop_track[0] = 0;
 
 	OGG_LoadTrackList();
 }

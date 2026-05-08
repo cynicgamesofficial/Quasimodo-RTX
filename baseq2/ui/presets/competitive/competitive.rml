@@ -1,0 +1,55 @@
+<rml>
+<head>
+    <link type="text/rcss" href="competitive.rcss"/>
+</head>
+<body>
+<div id="center-indicator"></div>
+<div id="hud-bottom">
+
+    <div id="hp-block">
+        <div id="hp-text-col">
+            <div class="side-label">health</div>
+            <div id="hp-num">100</div>
+        </div>
+        <div id="hp-bars">
+            <div class="bar-head"><div class="bar-label">hp</div><div id="hp-value" class="bar-value">100</div></div>
+            <div class="bar-track"><div id="hp-bar" class="bar-fill hp"></div></div>
+            <div class="bar-head"><div class="bar-label">armor</div><div id="armor-value" class="bar-value">0</div></div>
+            <div class="bar-track"><div id="armor-bar" class="bar-fill armor"></div></div>
+        </div>
+    </div>
+
+    <div class="stripe"></div>
+
+    <div id="kill-block">
+        <div id="kill-ring">
+            <div id="kill-ring-art"></div>
+            <div id="kill-num">0</div>
+        </div>
+        <div class="side-label">kills</div>
+    </div>
+
+    <div class="stripe"></div>
+
+    <div id="ammo-block">
+        <div id="ammo-bars">
+            <div class="bar-label">ammo</div>
+            <div class="bar-track"><div id="ammo-bar" class="bar-fill ammo"></div></div>
+            <div class="bar-label">reserve</div>
+            <div class="bar-track"><div id="reserve-bar" class="bar-fill reserve"></div></div>
+        </div>
+        <div id="ammo-text-row">
+            <div id="ammo-count-col">
+                <div id="ammo-num">0</div>
+                <div id="ammo-reserve">/ 0</div>
+            </div>
+            <div id="weapon-meta">
+                <div id="weapon-icon"></div>
+                <div id="weapon-name">-</div>
+            </div>
+        </div>
+    </div>
+
+</div>
+</body>
+</rml>

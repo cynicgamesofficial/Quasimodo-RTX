@@ -179,6 +179,9 @@ void CL_MuzzleFlash(void)
 #endif
 
     pl = &cl_entities[mz.entity];
+    if (mz.entity == cl.frame.clientNum + 1) {
+        cl_crosshair_fired = true;
+    }
 
     dl = CL_AllocDlight(mz.entity);
     VectorCopy(pl->current.origin,  dl->origin);

@@ -1,0 +1,23 @@
+<rml>
+<head>
+    <link type="text/rcss" href="crosshair.rcss"/>
+</head>
+<body>
+    <div id="ch-root">
+        <div id="ch-debug-center"></div>
+        <div id="ch-debug-label">RML CROSSHAIR</div>
+        <div id="ch-outline-line-t" class="ch-outline"></div>
+        <div id="ch-outline-line-b" class="ch-outline"></div>
+        <div id="ch-outline-line-l" class="ch-outline"></div>
+        <div id="ch-outline-line-r" class="ch-outline"></div>
+        <div id="ch-outline-dot" class="ch-outline-dot"></div>
+        <div id="ch-outline-circle" class="ch-outline-circle"></div>
+        <div id="ch-line-t" class="ch-line"></div>
+        <div id="ch-line-b" class="ch-line"></div>
+        <div id="ch-line-l" class="ch-line"></div>
+        <div id="ch-line-r" class="ch-line"></div>
+        <div id="ch-dot" class="ch-dot"></div>
+        <div id="ch-circle" class="ch-circle"></div>
+    </div>
+</body>
+</rml>

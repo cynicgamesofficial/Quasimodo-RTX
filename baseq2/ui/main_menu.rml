@@ -1,0 +1,26 @@
+<rml>
+<head>
+    <link type="text/rcss" href="styles/common.rcss"/>
+    <link type="text/rcss" href="styles/menu.rcss"/>
+    <title>Q2RTX</title>
+</head>
+<body class="menu-root">
+    <div class="menu-shell">
+        <div class="brand">QUASIMODO RTX</div>
+        <div class="subtitle">PATH TRACED · VULKAN · RTX</div>
+        <div class="menu-rule"></div>
+
+        <div class="menu-group-label">PLAY</div>
+        <button data-command="skill 1; deathmatch 0; coop 0; maxclients 1; newgame; forcemenuoff">New Game</button>
+        <button data-command="pushmenu loadgame">Load Game</button>
+        <button data-command="pushmenu multiplayer">Multiplayer</button>
+
+        <div class="menu-separator"></div>
+        <div class="menu-group-label">SETTINGS</div>
+        <button data-command="rmlsettings">Settings</button>
+
+        <div class="menu-separator"></div>
+        <button data-command="quit">Quit</button>
+    </div>
+</body>
+</rml>

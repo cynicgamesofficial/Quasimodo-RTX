@@ -530,6 +530,11 @@ static void mouse_button_event(SDL_MouseButtonEvent *event)
 {
     unsigned key;
 
+    if (sdl.win_width && sdl.win_height) {
+        UI_MouseEvent(event->x * sdl.width / sdl.win_width,
+                      event->y * sdl.height / sdl.win_height);
+    }
+
     switch (event->button) {
     case SDL_BUTTON_LEFT:
         key = K_MOUSE1;
@@ -670,10 +675,11 @@ static bool init_mouse(void)
 
 static void grab_mouse(bool grab)
 {
+    bool menu_or_console = (Key_GetDest() & (KEY_MENU | KEY_CONSOLE)) != 0;
     SDL_SetWindowGrab(sdl.window, grab);
-    SDL_SetRelativeMouseMode(grab && !(Key_GetDest() & KEY_MENU));
+    SDL_SetRelativeMouseMode(grab && !menu_or_console);
     SDL_GetRelativeMouseState(NULL, NULL);
-    SDL_ShowCursor(!(sdl.flags & QVF_FULLSCREEN));
+    SDL_ShowCursor(menu_or_console || !(sdl.flags & QVF_FULLSCREEN));
 }
 
 static bool probe(void)

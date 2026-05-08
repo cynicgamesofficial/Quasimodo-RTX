@@ -1,0 +1,20 @@
+<rml>
+<head>
+    <link type="text/rcss" href="styles/common.rcss"/>
+    <link type="text/rcss" href="styles/menu.rcss"/>
+    <title>Settings</title>
+</head>
+<body class="menu-root">
+    <div class="menu-shell">
+        <div class="brand small">SETTINGS</div>
+        <div class="subtitle">QUASIMODO RTX</div>
+        <div class="menu-rule"></div>
+
+        <div class="menu-group-label">SETTINGS</div>
+        <button data-command="rmlsettings">Settings</button>
+
+        <div class="menu-separator"></div>
+        <button data-command="rmlback">Back</button>
+    </div>
+</body>
+</rml>

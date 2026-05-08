@@ -19,6 +19,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "ui.h"
 #include "client/input.h"
 #include "../client.h"
+#include "../ui_rmlui.h"
 #include "common/prompt.h"
 
 uiStatic_t    uis;
@@ -28,6 +29,33 @@ LIST_DECL(ui_menus);
 cvar_t    *ui_debug;
 static cvar_t    *ui_open;
 static cvar_t    *ui_scale;
+static uiMenu_t  ui_rml_return_menu = UIMENU_NONE;
+
+static void UI_ClearLegacyMenuState(void)
+{
+    Key_SetDest(Key_GetDest() & ~KEY_MENU);
+    uis.menuDepth = 0;
+    uis.activeMenu = NULL;
+    uis.mouseTracker = NULL;
+    uis.transparent = false;
+}
+
+static void UI_ReturnToStoredRmlMenu(void)
+{
+    const uiMenu_t menu_type = ui_rml_return_menu;
+    const bool paused = (menu_type == UIMENU_GAME && cls.state >= ca_active);
+
+    ui_rml_return_menu = UIMENU_NONE;
+    UI_ClearLegacyMenuState();
+
+    if (!UI_Rml_IsEnabled()) {
+        return;
+    }
+
+    UI_Rml_SetMenuState(menu_type, paused);
+    Key_SetDest((Key_GetDest() & ~KEY_CONSOLE) | KEY_MENU);
+    Con_Close(true);
+}
 
 // ===========================================================================
 
@@ -121,6 +149,13 @@ void UI_ForceMenuOff(void)
     menuFrameWork_t *menu;
     int i;
 
+    if (UI_Rml_IsMenuOpen()) {
+        ui_rml_return_menu = UIMENU_NONE;
+        UI_Rml_ForceMenuOff();
+        Key_SetDest(Key_GetDest() & ~KEY_MENU);
+        return;
+    }
+
     for (i = 0; i < uis.menuDepth; i++) {
         menu = uis.layers[i];
         if (menu->pop) {
@@ -128,11 +163,8 @@ void UI_ForceMenuOff(void)
         }
     }
 
-    Key_SetDest(Key_GetDest() & ~KEY_MENU);
-    uis.menuDepth = 0;
-    uis.activeMenu = NULL;
-    uis.mouseTracker = NULL;
-    uis.transparent = false;
+    ui_rml_return_menu = UIMENU_NONE;
+    UI_ClearLegacyMenuState();
 }
 
 /*
@@ -152,6 +184,11 @@ void UI_PopMenu(void)
     }
 
     if (!uis.menuDepth) {
+        if (ui_rml_return_menu != UIMENU_NONE) {
+            UI_ReturnToStoredRmlMenu();
+            return;
+        }
+
         UI_ForceMenuOff();
 
 		// Save the config file if the user closes the menu while in-game
@@ -175,6 +212,10 @@ UI_IsTransparent
 */
 bool UI_IsTransparent(void)
 {
+    if (UI_Rml_IsMenuOpen()) {
+        return UI_Rml_IsTransparent();
+    }
+
     if (!(Key_GetDest() & KEY_MENU)) {
         return true;
     }
@@ -209,6 +250,18 @@ void UI_OpenMenu(uiMenu_t type)
     menuFrameWork_t *menu = NULL;
 
     if (!uis.initialized) {
+        return;
+    }
+
+    if (UI_Rml_IsEnabled()) {
+        ui_rml_return_menu = UIMENU_NONE;
+        bool paused = (type == UIMENU_GAME && cls.state >= ca_active);
+        UI_Rml_ForceMenuOff();
+        if (type != UIMENU_NONE) {
+            UI_Rml_SetMenuState(type, paused);
+            Key_SetDest((Key_GetDest() & ~KEY_CONSOLE) | KEY_MENU);
+            Con_Close(true);
+        }
         return;
     }
 
@@ -401,6 +454,11 @@ UI_MouseEvent
 */
 void UI_MouseEvent(int x, int y)
 {
+    if (UI_Rml_IsMenuOpen()) {
+        UI_Rml_HandleMouseMove(x, y);
+        return;
+    }
+
     x = Q_clip(x, 0, r_config.width - 1);
     y = Q_clip(y, 0, r_config.height - 1);
 
@@ -418,6 +476,10 @@ UI_Draw
 void UI_Draw(unsigned realtime)
 {
     int i;
+
+    if (UI_Rml_IsMenuOpen()) {
+        return;
+    }
 
     uis.realtime = realtime;
 
@@ -448,12 +510,6 @@ void UI_Draw(unsigned realtime)
                 Menu_Draw(uis.layers[i]);
             }
         }
-    }
-
-    // draw custom cursor in fullscreen mode
-    if (r_config.flags & QVF_FULLSCREEN) {
-        R_DrawPic(uis.mouseCoords[0] - uis.cursorWidth / 2,
-                  uis.mouseCoords[1] - uis.cursorHeight / 2, uis.cursorHandle);
     }
 
     if (ui_debug->integer) {
@@ -502,6 +558,11 @@ void UI_KeyEvent(int key, bool down)
 {
     menuSound_t sound;
 
+    if (UI_Rml_IsMenuOpen()) {
+        UI_Rml_HandleKeyEvent(key, down);
+        return;
+    }
+
     if (!uis.activeMenu) {
         return;
     }
@@ -527,6 +588,11 @@ void UI_CharEvent(int key)
 {
     menuCommon_t *item;
     menuSound_t sound;
+
+    if (UI_Rml_IsMenuOpen()) {
+        UI_Rml_HandleTextInput(key);
+        return;
+    }
 
     if (!uis.activeMenu) {
         return;
@@ -566,11 +632,19 @@ static void UI_PushMenu_f(void)
     }
     s = Cmd_Argv(1);
     menu = UI_FindMenu(s);
-    if (menu) {
-        UI_PushMenu(menu);
-    } else {
+    if (!menu) {
         Com_Printf("No such menu: %s\n", s);
+        return;
     }
+    // When a legacy submenu is opened from the top-level Rml main/pause menu,
+    // remember where it came from so backing out of the last legacy submenu
+    // returns to that same top-level Rml surface.
+    if (UI_Rml_IsMenuOpen()) {
+        ui_rml_return_menu = UI_Rml_IsTransparent() ? UIMENU_GAME : UIMENU_MAIN;
+        UI_Rml_ForceMenuOff();
+        Key_SetDest(Key_GetDest() & ~KEY_MENU);
+    }
+    UI_PushMenu(menu);
 }
 
 static void UI_PopMenu_f(void)
@@ -580,11 +654,28 @@ static void UI_PopMenu_f(void)
     }
 }
 
+static void UI_RmlReload_f(void)
+{
+    UI_Rml_Reload();
+}
+
+static void UI_RmlCrosshairMenu_f(void)
+{
+    UI_Rml_ToggleCrosshairMenu();
+}
+
+static void UI_RmlSettingsMenu_f(void)
+{
+    UI_Rml_ToggleSettingsMenu();
+}
 
 static const cmdreg_t c_ui[] = {
     { "forcemenuoff", UI_ForceMenuOff },
     { "pushmenu", UI_PushMenu_f, UI_PushMenu_c },
     { "popmenu", UI_PopMenu_f },
+    { "ui_rmlui_reload", UI_RmlReload_f },
+    { "crosshair_menu", UI_RmlCrosshairMenu_f },
+    { "settings", UI_RmlSettingsMenu_f },
 
     { NULL, NULL }
 };
@@ -630,6 +721,7 @@ void UI_Init(void)
     ui_open = Cvar_Get("ui_open", "1", 0);
 
     UI_ModeChanged();
+    UI_Rml_Init();
 
     uis.fontHandle = R_RegisterFont("conchars");
     uis.cursorHandle = R_RegisterPic("ch1");
@@ -671,6 +763,7 @@ void UI_Shutdown(void)
     if (!uis.initialized) {
         return;
     }
+    UI_Rml_Shutdown();
     UI_ForceMenuOff();
 
     ui_scale->changed = NULL;

@@ -1,0 +1,252 @@
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    font-family: "Rajdhani";
+    font-size: 14px;
+    color: #ffffff;
+    pointer-events: none;
+}
+
+.hidden {
+    display: none;
+}
+
+#center-indicator {
+    position: absolute;
+    top: 24%;
+    left: 0px;
+    right: 0px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: bold;
+    line-height: 1.2em;
+    color: rgba(255, 255, 255, 0.96);
+    opacity: 0;
+}
+
+#hud-bottom {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    display: block;
+    padding-bottom: 0px;
+    overflow: visible;
+}
+
+.stripe {
+    position: absolute;
+    width: 1px;
+    height: 62px;
+    background-color: rgba(255, 255, 255, 0.08);
+    margin-left: 0px;
+    margin-right: 0px;
+}
+
+#hp-block {
+    position: absolute;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 220px;
+    justify-content: flex-end;
+}
+
+#hp-text-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+#hp-num {
+    font-size: 50px;
+    font-weight: bold;
+    line-height: 1em;
+    color: #ffffff;
+    transition: color 0.25s;
+}
+
+#hp-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-left: 14px;
+    width: 92px;
+}
+
+#kill-block {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+}
+
+#kill-ring {
+    width: 68px;
+    height: 68px;
+    position: relative;
+}
+
+#kill-ring-art {
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    width: 68px;
+    height: 68px;
+}
+
+.kill-ring-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+#kill-num {
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    right: 0px;
+    bottom: 0px;
+    font-size: 21px;
+    font-weight: bold;
+    text-align: center;
+    line-height: 68px;
+    color: #ffffff;
+}
+
+#ammo-block {
+    position: absolute;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 390px;
+    justify-content: flex-start;
+}
+
+#ammo-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-right: 14px;
+    width: 92px;
+}
+
+#ammo-text-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+}
+
+#ammo-count-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    min-width: 76px;
+}
+
+#ammo-num {
+    font-size: 50px;
+    font-weight: bold;
+    line-height: 1em;
+}
+
+#ammo-reserve {
+    font-size: 18px;
+    color: rgba(255, 255, 255, 0.28);
+    margin-top: 4px;
+}
+
+#weapon-meta {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-width: 190px;
+    flex-shrink: 0;
+}
+
+#weapon-icon {
+    width: 54px;
+    height: 54px;
+    color: #f28c28;
+    flex-shrink: 0;
+}
+
+.weapon-icon-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    color: #f28c28;
+}
+
+#weapon-name {
+    flex: 1;
+    min-width: 96px;
+    max-width: 240px;
+    font-size: 22px;
+    font-weight: bold;
+    line-height: 1.15em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: visible;
+}
+
+.side-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.28);
+    text-transform: uppercase;
+    letter-spacing: 0px;
+    margin-bottom: 1px;
+}
+
+.bar-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.28);
+    text-transform: uppercase;
+    letter-spacing: 0px;
+}
+
+.bar-head {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.bar-value {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.72);
+    font-weight: bold;
+    letter-spacing: 0px;
+}
+
+.bar-track {
+    height: 4px;
+    background-color: rgba(255, 255, 255, 0.10);
+    border-radius: 2px;
+}
+
+.bar-fill {
+    height: 4px;
+    border-radius: 2px;
+    width: 100%;
+    transition: width 0.25s;
+}
+
+.bar-fill.hp { background-color: #4ade80; }
+.bar-fill.armor { background-color: #60a5fa; }
+.bar-fill.ammo { background-color: #facc15; }
+.bar-fill.reserve { background-color: rgba(255, 255, 255, 0.25); }
+
+#hp-num.warn { color: #facc15; }
+#hp-num.crit { color: #f87171; }
+.bar-fill.hp.warn { background-color: #facc15; }
+.bar-fill.hp.crit { background-color: #f87171; }
+.bar-fill.ammo.low { background-color: #f87171; }

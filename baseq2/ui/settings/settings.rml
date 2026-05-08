@@ -1,0 +1,66 @@
+<rml>
+<head>
+    <link type="text/rcss" href="../styles/common.rcss"/>
+    <link type="text/rcss" href="../styles/menu.rcss"/>
+    <link type="text/rcss" href="settings.rcss"/>
+</head>
+<body>
+<div id="settings-root" class="menu-root">
+<div id="settings-shell">
+
+    <div id="settings-status-row">
+        <div id="settings-title-block">
+            <div id="settings-title">Gameplay</div>
+            <div id="settings-caption">Quasimodo RTX &mdash; Settings</div>
+        </div>
+        <div id="settings-dirty">Unapplied changes</div>
+    </div>
+
+    <div id="settings-body">
+        <div id="settings-home">
+            <div id="settings-tree">
+                <div class="menu-group-label">GAME</div>
+                <button class="tree-item" id="tree-game" data-settings-tab="0">Gameplay &amp; Player</button>
+                <button class="tree-item" id="tree-controls" data-settings-tab="7">Controls</button>
+
+                <div class="menu-separator"></div>
+                <div class="menu-group-label">VIDEO</div>
+                <button class="tree-item" id="tree-video" data-settings-tab="1">Graphics &amp; Display</button>
+                <button class="tree-item" id="tree-rtx" data-settings-tab="2">Ray Tracing</button>
+                <button class="tree-item" id="tree-environment" data-settings-tab="3">Environment</button>
+                <button class="tree-item" id="tree-effects" data-settings-tab="4">Effects</button>
+
+                <div class="menu-separator"></div>
+                <div class="menu-group-label">SYSTEM</div>
+                <button class="tree-item" id="tree-audio" data-settings-tab="6">Audio</button>
+                <button class="tree-item" id="tree-developer" data-settings-tab="5">Developer &amp; Debug</button>
+            </div>
+        </div>
+
+        <div id="settings-panel">
+            <div id="settings-breadcrumb">Settings</div>
+            <div id="settings-content"></div>
+        </div>
+    </div>
+
+    <div id="settings-footer">
+        <button id="btn-reset" data-settings-action="reset">Reset Tab</button>
+        <div class="footer-spacer"></div>
+        <button id="btn-back" data-settings-action="back">Back</button>
+    </div>
+
+    <div id="settings-confirm">
+        <div id="confirm-box">
+            <div id="confirm-title">Discard changes?</div>
+            <div id="confirm-text">You have unapplied settings changes.</div>
+            <div id="confirm-actions">
+                <button data-settings-action="confirm-cancel">Cancel</button>
+                <button data-settings-action="confirm-discard">Discard</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+</body>
+</rml>

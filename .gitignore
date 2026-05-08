@@ -53,4 +53,5 @@ save
 baseq2/**/*.txt
 !baseq2/*.txt
 !baseq2/maps/sky/*.txt
+!baseq2/ui/fonts/*.txt
 !baseq2/pics/flashlight_profile.png

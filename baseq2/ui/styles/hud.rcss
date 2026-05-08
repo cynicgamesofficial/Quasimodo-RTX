@@ -1,0 +1,68 @@
+.hud-root {
+    pointer-events: none;
+    font-family: "Roboto Mono";
+}
+
+.hud-cluster {
+    position: absolute;
+    left: 34px;
+    bottom: 30px;
+    min-width: 130px;
+    padding: 10px 14px;
+    border-width: 1px;
+    border-color: #29d6ff99;
+    background-color: #020b10aa;
+}
+
+.hud-cluster.right {
+    left: auto;
+    right: 34px;
+    text-align: right;
+}
+
+.hud-cluster.armor {
+    left: 34px;
+    bottom: 112px;
+}
+
+.hud-label {
+    color: #78cbd8;
+    font-size: 12px;
+}
+
+.hud-value {
+    color: #ffffff;
+    font-size: 30px;
+}
+
+.hud-crosshair {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 18px;
+    height: 18px;
+    margin-left: -9px;
+    margin-top: -9px;
+    border-width: 1px;
+    border-color: #8ff7ffcc;
+}
+
+.hud-weapon {
+    position: absolute;
+    right: 34px;
+    bottom: 112px;
+    width: 320px;
+    color: #9feeff;
+    font-size: 16px;
+    text-align: right;
+}
+
+.hud-pickup {
+    position: absolute;
+    left: 25%;
+    right: 25%;
+    top: 18%;
+    color: #ffffff;
+    font-size: 18px;
+    text-align: center;
+}

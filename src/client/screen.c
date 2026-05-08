@@ -18,6 +18,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 // cl_scrn.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "client.h"
+#include "ui_rmlui.h"
 #include "refresh/images.h"
 
 #define STAT_PICS       11
@@ -62,6 +63,7 @@ static cvar_t   *scr_showturtle;
 static cvar_t   *scr_showitemname;
 
 static cvar_t   *scr_draw2d;
+qboolean        cl_crosshair_fired;
 static cvar_t   *scr_lag_x;
 static cvar_t   *scr_lag_y;
 static cvar_t   *scr_lag_draw;
@@ -377,14 +379,19 @@ void SCR_CenterPrint(const char *str)
     Con_ClearNotify_f();
 }
 
+static float SCR_CenterStringAlpha(void)
+{
+    Cvar_ClampValue(scr_centertime, 0.3f, 10.0f);
+
+    return SCR_FadeAlpha(scr_centertime_start, scr_centertime->value * 1000, 300);
+}
+
 static void SCR_DrawCenterString(void)
 {
     int y;
     float alpha;
 
-    Cvar_ClampValue(scr_centertime, 0.3f, 10.0f);
-
-    alpha = SCR_FadeAlpha(scr_centertime_start, scr_centertime->value * 1000, 300);
+    alpha = SCR_CenterStringAlpha();
     if (!alpha) {
         return;
     }
@@ -1239,9 +1246,9 @@ void SCR_Init(void)
     scr_demobar = Cvar_Get("scr_demobar", "1", 0);
     scr_font = Cvar_Get("scr_font", "conchars", 0);
     scr_font->changed = scr_font_changed;
-    scr_scale = Cvar_Get("scr_scale", "0", 0);
+    scr_scale = Cvar_Get("scr_scale", "0", CVAR_ARCHIVE);
     scr_scale->changed = scr_scale_changed;
-    scr_crosshair = Cvar_Get("crosshair", "0", CVAR_ARCHIVE);
+    scr_crosshair = Cvar_Get("crosshair", "1", CVAR_ARCHIVE);
     scr_crosshair->changed = scr_crosshair_changed;
 
     scr_chathud = Cvar_Get("scr_chathud", "0", 0);
@@ -1252,21 +1259,21 @@ void SCR_Init(void)
     scr_chathud_x = Cvar_Get("scr_chathud_x", "8", 0);
     scr_chathud_y = Cvar_Get("scr_chathud_y", "-64", 0);
 
-    ch_health = Cvar_Get("ch_health", "0", 0);
+    ch_health = Cvar_Get("ch_health", "0", CVAR_ARCHIVE);
     ch_health->changed = scr_crosshair_changed;
-    ch_red = Cvar_Get("ch_red", "1", 0);
+    ch_red = Cvar_Get("ch_red", "1", CVAR_ARCHIVE);
     ch_red->changed = scr_crosshair_changed;
-    ch_green = Cvar_Get("ch_green", "1", 0);
+    ch_green = Cvar_Get("ch_green", "1", CVAR_ARCHIVE);
     ch_green->changed = scr_crosshair_changed;
-    ch_blue = Cvar_Get("ch_blue", "1", 0);
+    ch_blue = Cvar_Get("ch_blue", "1", CVAR_ARCHIVE);
     ch_blue->changed = scr_crosshair_changed;
-    ch_alpha = Cvar_Get("ch_alpha", "1", 0);
+    ch_alpha = Cvar_Get("ch_alpha", "1", CVAR_ARCHIVE);
     ch_alpha->changed = scr_crosshair_changed;
 
-    ch_scale = Cvar_Get("ch_scale", "1", 0);
+    ch_scale = Cvar_Get("ch_scale", "1", CVAR_ARCHIVE);
     ch_scale->changed = scr_crosshair_changed;
-    ch_x = Cvar_Get("ch_x", "0", 0);
-    ch_y = Cvar_Get("ch_y", "0", 0);
+    ch_x = Cvar_Get("ch_x", "0", CVAR_ARCHIVE);
+    ch_y = Cvar_Get("ch_y", "0", CVAR_ARCHIVE);
 
     scr_draw2d = Cvar_Get("scr_draw2d", "2", 0);
     scr_showturtle = Cvar_Get("scr_showturtle", "1", 0);
@@ -1276,7 +1283,7 @@ void SCR_Init(void)
     scr_lag_draw = Cvar_Get("scr_lag_draw", "0", 0);
     scr_lag_min = Cvar_Get("scr_lag_min", "0", 0);
     scr_lag_max = Cvar_Get("scr_lag_max", "200", 0);
-	scr_alpha = Cvar_Get("scr_alpha", "1", 0);
+	scr_alpha = Cvar_Get("scr_alpha", "1", CVAR_ARCHIVE);
 	scr_fps = Cvar_Get("scr_fps", "0", CVAR_ARCHIVE);
 #ifdef USE_DEBUG
     scr_showstats = Cvar_Get("scr_showstats", "0", 0);
@@ -2048,6 +2055,23 @@ draw:
 
 static void SCR_Draw2D(void)
 {
+    if (UI_Rml_IsEnabled()) {
+        if (UI_Rml_UseLegacyCrosshair() && scr_draw2d->integer > 0 && !(cls.key_dest & KEY_MENU)) {
+            int old_hud_width = scr.hud_width;
+            int old_hud_height = scr.hud_height;
+            R_SetAlphaScale(scr.hud_alpha);
+            R_SetScale(scr.hud_scale);
+            scr.hud_height = Q_rint(scr.hud_height * scr.hud_scale);
+            scr.hud_width = Q_rint(scr.hud_width * scr.hud_scale);
+            SCR_DrawCrosshair();
+            scr.hud_width = old_hud_width;
+            scr.hud_height = old_hud_height;
+            R_SetScale(1.0f);
+            R_SetAlphaScale(1.0f);
+        }
+        return;
+    }
+
 	if (scr_draw2d->integer <= 0)
 		return;     // turn off for screenshots
 
@@ -2100,6 +2124,93 @@ static void SCR_Draw2D(void)
 	R_SetAlphaScale(1.0f);
 }
 
+static void SCR_UpdateRmlHudState(void)
+{
+    ui_rml_hud_state_t state;
+    const char *weapon = "";
+    const char *weapon_model = "";
+    int selected;
+    int gun_model_index;
+
+    if (!UI_Rml_IsEnabled()) {
+        return;
+    }
+
+    memset(&state, 0, sizeof(state));
+    state.health = cl.frame.ps.stats[STAT_HEALTH];
+    state.armor = cl.frame.ps.stats[STAT_ARMOR];
+    state.ammo = cl.frame.ps.stats[STAT_AMMO];
+    state.ammo_max = state.ammo > 100 ? state.ammo : 100;
+    state.ammo_reserve = 0;
+    state.kills = cl.frame.ps.stats[STAT_FRAGS];
+    state.layouts = cl.frame.ps.stats[STAT_LAYOUTS];
+    state.hud_scale = scr.hud_scale;
+    state.hud_alpha = scr_alpha->value;
+    state.pickup_alpha = SCR_CenterStringAlpha() * scr_alpha->value;
+
+    gun_model_index = cl.frame.ps.gunindex & GUNINDEX_MASK;
+    if (gun_model_index > 0 && cl.csr.models + gun_model_index < cl.csr.end) {
+        weapon_model = cl.configstrings[cl.csr.models + gun_model_index];
+        if (!Q_strcasecmp(weapon_model, "models/weapons/v_blast/tris.md2")) {
+            weapon = "Blaster";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_shotg/tris.md2")) {
+            weapon = "Shotgun";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_shotg2/tris.md2")) {
+            weapon = "Super Shotgun";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_machn/tris.md2")) {
+            weapon = "Machinegun";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_chain/tris.md2")) {
+            weapon = "Chaingun";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_handgr/tris.md2")) {
+            weapon = "Grenades";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_launch/tris.md2")) {
+            weapon = "Grenade Launcher";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_rocket/tris.md2")) {
+            weapon = "Rocket Launcher";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_hyperb/tris.md2")) {
+            weapon = "HyperBlaster";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_rail/tris.md2")) {
+            weapon = "Railgun";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_bfg/tris.md2")) {
+            weapon = "BFG10K";
+        } else if (!Q_strcasecmp(weapon_model, "models/weapons/v_flareg/tris.md3")) {
+            weapon = "Flare Gun";
+        }
+    }
+
+    selected = cl.frame.ps.stats[STAT_SELECTED_ITEM];
+    state.selected_item = selected;
+    if (!weapon[0] && selected >= 0 && cl.csr.items + selected < cl.csr.end) {
+        weapon = cl.configstrings[cl.csr.items + selected];
+    }
+    state.weapon_name = weapon;
+    state.pickup = scr_centerstring;
+    UI_Rml_SetHudState(&state);
+}
+
+static void SCR_UpdateRmlCrosshair(void)
+{
+    float speed2;
+    float speed;
+    int pm_flags;
+
+    if (!UI_Rml_IsEnabled()) {
+        cl_crosshair_fired = false;
+        return;
+    }
+
+    speed2 = cl.predicted_velocity[0] * cl.predicted_velocity[0] +
+             cl.predicted_velocity[1] * cl.predicted_velocity[1];
+    speed = sqrtf(speed2);
+    pm_flags = cl.frame.ps.pmove.pm_flags;
+    UI_Rml_UpdateCrosshair(cls.frametime, speed,
+                           ((pm_flags & PMF_ON_GROUND) != 0) || fabsf(cl.predicted_velocity[2]) <= 20.0f,
+                           (pm_flags & PMF_DUCKED) != 0,
+                           cl_crosshair_fired != false,
+                           cl.frame.ps.stats[STAT_LAYOUTS]);
+    cl_crosshair_fired = false;
+}
+
 static void SCR_DrawActive(void)
 {
     // if full screen menu is up, do nothing at all
@@ -2130,6 +2241,9 @@ static void SCR_DrawActive(void)
 
     // draw 3D game view
     V_RenderView();
+
+    SCR_UpdateRmlHudState();
+    SCR_UpdateRmlCrosshair();
 
     // draw all 2D elements
     SCR_Draw2D();
@@ -2172,12 +2286,22 @@ void SCR_UpdateScreen(void)
     recursive++;
 
     R_BeginFrame();
+    UI_Rml_NewFrame(r_config.width, r_config.height, cls.realtime * 0.001);
 
     // do 3D refresh drawing
     SCR_DrawActive();
 
-    // draw main menu
-    UI_Draw(cls.realtime);
+    // Render the Rml HUD/menu path whenever it is enabled. If a legacy menu
+    // has been opened via pushmenu while ui_rmlui stays enabled, draw that
+    // legacy menu on top during the same frame.
+    if (UI_Rml_IsEnabled()) {
+        UI_Rml_Render();
+        if (!UI_Rml_IsMenuOpen()) {
+            UI_Draw(cls.realtime);
+        }
+    } else {
+        UI_Draw(cls.realtime);
+    }
 
     // draw console
     Con_DrawConsole();

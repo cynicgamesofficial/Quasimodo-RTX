@@ -107,6 +107,16 @@ SET(SRC_CLIENT
 	client/refresh.c
 	client/screen.c
 	client/tent.c
+	client/hud/crosshair.cpp
+	client/hud/crosshair_menu.cpp
+	client/hud/preset_competitive.cpp
+	client/intro/intro_sequence.cpp
+	client/ui/settings_menu.cpp
+	client/ui/settings_widgets.cpp
+	client/ui_rmlui.cpp
+	client/ui_rmlui_render_vk.cpp
+	client/ui_rmlui_system.cpp
+	client/ui_rmlui_input.cpp
 	client/view.c
 	client/ui/demos.c
 	client/ui/menu.c
@@ -130,6 +140,13 @@ SET(SRC_CLIENT_HTTP
 
 SET(HEADERS_CLIENT
 	client/client.h
+	client/hud/crosshair.h
+	client/hud/crosshair_menu.h
+	client/hud/preset_competitive.h
+	client/intro/intro_sequence.h
+	client/ui/settings_menu.h
+	client/ui/settings_widgets.h
+	client/ui_rmlui.h
 	client/ui/ui.h
 	client/sound/sound.h
 	client/sound/qal/fixed.h
@@ -288,9 +305,15 @@ SET(SRC_VKPT
 )
 
 IF(WIN32)
-	SET(SRC_VKPT_STREAMLINE
-		refresh/vkpt/streamline_reflex.cpp
-	)
+    IF(EXISTS "${STREAMLINE_ROOT}/include/sl.h")
+	    SET(SRC_VKPT_STREAMLINE
+		    refresh/vkpt/streamline_reflex.cpp
+	    )
+    ELSE()
+	    SET(SRC_VKPT_STREAMLINE
+		    refresh/vkpt/streamline_reflex_stub.c
+	    )
+    ENDIF()
 	IF(TARGET NRD)
 		SET(SRC_VKPT_NRD
 			refresh/vkpt/nrd.c
@@ -571,6 +594,7 @@ IF (TARGET client)
                     MESSAGE(STATUS "Streamline runtime DLLs not found under ${STREAMLINE_BIN_DEV_DIR} or ${STREAMLINE_BIN_DIR}")
                 endif()
             ELSE()
+                TARGET_SOURCES(client PRIVATE ${SRC_VKPT_STREAMLINE})
                 MESSAGE(STATUS "Streamline SDK not found at ${STREAMLINE_ROOT} - Reflex disabled at compile time")
             ENDIF()
         ENDIF()
@@ -602,6 +626,24 @@ IF (TARGET client)
     TARGET_LINK_LIBRARIES(client stb)
     TARGET_LINK_LIBRARIES(client tinyobjloader)
     TARGET_LINK_LIBRARIES(client OpenAL)
+    IF(TARGET RmlUi::Core)
+        TARGET_LINK_LIBRARIES(client RmlUi::Core)
+        TARGET_COMPILE_DEFINITIONS(client PRIVATE USE_RMLUI=1)
+        IF(WIN32 AND Q2RTX_FREETYPE_ROOT AND NOT Q2RTX_FREETYPE_ADDED_FROM_SOURCE)
+            FILE(GLOB Q2RTX_FREETYPE_RUNTIME_DLLS "${Q2RTX_FREETYPE_ROOT}/bin/*.dll")
+        ENDIF()
+        IF(WIN32 AND TARGET freetype AND BUILD_SHARED_LIBS)
+            LIST(APPEND Q2RTX_FREETYPE_RUNTIME_DLLS "$<TARGET_FILE:freetype>")
+        ENDIF()
+        IF(WIN32 AND Q2RTX_FREETYPE_RUNTIME_DLLS)
+            ADD_CUSTOM_COMMAND(TARGET client POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${Q2RTX_FREETYPE_RUNTIME_DLLS}
+                    $<TARGET_FILE_DIR:client>
+                COMMENT "Copying FreeType runtime DLL dependencies"
+            )
+        ENDIF()
+    ENDIF()
 ENDIF()
 
 SOURCE_GROUP("game\\sources" FILES ${SRC_GAME})

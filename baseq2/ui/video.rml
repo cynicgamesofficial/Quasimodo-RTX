@@ -1,0 +1,30 @@
+<rml>
+<head>
+    <link type="text/rcss" href="styles/common.rcss"/>
+    <link type="text/rcss" href="styles/menu.rcss"/>
+    <title>Video / RTX</title>
+</head>
+<body class="menu-root">
+    <div class="menu-shell">
+        <div class="brand small">VIDEO / RTX</div>
+        <div class="subtitle">QUICK TOGGLES</div>
+        <div class="menu-rule"></div>
+
+        <div class="menu-group-label">QUICK SETTINGS</div>
+        <button data-command="toggle vid_vsync">Toggle VSync</button>
+        <button data-command="toggle pt_dlss">Toggle DLSS</button>
+        <button data-command="toggle pt_reflect_refract">Toggle Reflections</button>
+        <button data-command="toggle pt_bloom">Toggle Bloom</button>
+        <button data-command="toggle pt_dof">Toggle Depth of Field</button>
+        <button data-command="toggle scr_fps">Toggle FPS Counter</button>
+        <button data-command="vid_restart">Apply / Restart Video</button>
+
+        <div class="menu-separator"></div>
+        <div class="menu-group-label">FULL SETTINGS</div>
+        <button data-command="rmlsettings">Open Settings</button>
+
+        <div class="menu-separator"></div>
+        <button data-command="rmlback">Back</button>
+    </div>
+</body>
+</rml>

@@ -1,0 +1,24 @@
+<rml>
+<head>
+    <link type="text/rcss" href="styles/common.rcss"/>
+    <link type="text/rcss" href="styles/hud.rcss"/>
+    <title>HUD</title>
+</head>
+<body class="hud-root">
+    <div id="hud-left" class="hud-cluster">
+        <div class="hud-label">HEALTH</div>
+        <div id="hud-health" class="hud-value">100</div>
+    </div>
+    <div id="hud-center" class="hud-crosshair"></div>
+    <div id="hud-right" class="hud-cluster right">
+        <div class="hud-label">AMMO</div>
+        <div id="hud-ammo" class="hud-value">0</div>
+    </div>
+    <div id="hud-armor-panel" class="hud-cluster armor">
+        <div class="hud-label">ARMOR</div>
+        <div id="hud-armor" class="hud-value">0</div>
+    </div>
+    <div id="hud-weapon" class="hud-weapon"></div>
+    <div id="hud-pickup" class="hud-pickup"></div>
+</body>
+</rml>
