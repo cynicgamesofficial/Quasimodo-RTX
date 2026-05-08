@@ -4,12 +4,15 @@
 #include <cstdio>
 
 extern "C" {
-typedef struct cvar_s cvar_t;
-cvar_t *Cvar_Set(const char *var_name, const char *value);
-void Com_LPrintf(int type, const char *fmt, ...);
+#include "shared/shared.h"
+#include "common/cvar.h"
 }
 
-#define PRINT_WARNING 3
+#undef inline
+#undef min
+#undef max
+#undef DotProduct
+#undef CrossProduct
 
 namespace {
 

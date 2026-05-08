@@ -6,36 +6,13 @@
 #include "ui/settings_menu.h"
 
 extern "C" {
-typedef unsigned char byte;
-typedef int qhandle_t;
-typedef int keydest_t;
-typedef struct cmdbuf_s cmdbuf_t;
-typedef struct cvar_s {
-    char *name;
-    char *string;
-    char *latched_string;
-    int flags;
-    int modified;
-    float value;
-    struct cvar_s *next;
-    int integer;
-} cvar_t;
-typedef struct refcfg_s {
-    int width;
-    int height;
-    int flags;
-} refcfg_t;
+#include "common/cmd.h"
+#include "common/cvar.h"
+#include "common/files.h"
+#include "common/zone.h"
+#include "refresh/refresh.h"
+#include "client/keys.h"
 
-extern cmdbuf_t cmd_buffer;
-extern refcfg_t r_config;
-
-void Cbuf_AddText(cmdbuf_t *buffer, const char *text);
-cvar_t *Cvar_Get(const char *name, const char *value, int flags);
-cvar_t *Cvar_WeakGet(const char *name);
-cvar_t *Cvar_Set(const char *var_name, const char *value);
-void Com_LPrintf(int type, const char *fmt, ...);
-int FS_LoadFileEx(const char *path, void **buffer, unsigned flags, int tag);
-void Z_Free(void *ptr);
 void UI_StartSound(int sound);
 bool OGG_PlayMenuTrack(const char *track);
 void OGG_StopMenuTrack(void);
@@ -43,43 +20,8 @@ extern void (*R_ClearColor)(void);
 extern void (*R_SetAlphaScale)(float alpha);
 extern void (*R_SetScale)(float scale);
 extern void (*R_DrawFill32)(int x, int y, int w, int h, uint32_t color);
-int Key_IsDown(int key);
-keydest_t Key_GetDest(void);
-void Key_SetDest(keydest_t dest);
 }
 
-#define K_BACKSPACE     8
-#define K_TAB           9
-#define K_ENTER         13
-#define K_ESCAPE        27
-#define K_SPACE         32
-#define K_DEL           127
-#define K_UPARROW       128
-#define K_DOWNARROW     129
-#define K_LEFTARROW     130
-#define K_RIGHTARROW    131
-#define K_ALT           132
-#define K_CTRL          133
-#define K_SHIFT         134
-#define K_INS           147
-#define K_PGDN          148
-#define K_PGUP          149
-#define K_HOME          150
-#define K_END           151
-#define K_MOUSEFIRST    200
-#define K_MOUSE1        200
-#define K_MOUSE8        207
-#define K_MWHEELDOWN    210
-#define K_MWHEELUP      211
-#define KEY_MENU        4
-#define CVAR_ARCHIVE    1
-#define TAG_FILESYSTEM  3
-#define LAYOUTS_HIDE_HUD 4
-#define LAYOUTS_HIDE_CROSSHAIR 32
-#define PRINT_ALL       0
-#define PRINT_DEVELOPER 2
-#define PRINT_WARNING   3
-#define PRINT_ERROR     4
 #define QMS_IN          2
 #define QMS_MOVE        3
 #define QMS_OUT         4
@@ -476,7 +418,7 @@ void show_settings_menu(SettingsTab tab)
     rmlui.settings_menu.Show(tab);
     rmlui.menu_open = true;
     refresh_menu_mouse_position();
-    Key_SetDest(Key_GetDest() | KEY_MENU);
+    Key_SetDest(static_cast<keydest_t>(Key_GetDest() | KEY_MENU));
     debug_log("RmlUi: show settings tab=%d active_doc=%s\n",
               static_cast<int>(tab),
               rmlui.active_menu_document.empty() ? "<none>" : rmlui.active_menu_document.c_str());
@@ -500,7 +442,7 @@ void show_settings_section(SettingsTab tab, const char *section)
     rmlui.settings_menu.ShowSection(tab, section);
     rmlui.menu_open = true;
     refresh_menu_mouse_position();
-    Key_SetDest(Key_GetDest() | KEY_MENU);
+    Key_SetDest(static_cast<keydest_t>(Key_GetDest() | KEY_MENU));
     debug_log("RmlUi: show settings tab=%d section=%s active_doc=%s\n",
               static_cast<int>(tab),
               section ? section : "",
@@ -525,7 +467,7 @@ void show_settings_root()
     rmlui.settings_menu.ShowRoot();
     rmlui.menu_open = true;
     refresh_menu_mouse_position();
-    Key_SetDest(Key_GetDest() | KEY_MENU);
+    Key_SetDest(static_cast<keydest_t>(Key_GetDest() | KEY_MENU));
     debug_log("RmlUi: show settings root active_doc=%s\n",
               rmlui.active_menu_document.empty() ? "<none>" : rmlui.active_menu_document.c_str());
 }
@@ -645,7 +587,7 @@ void process_pending_shell_closes()
         } else if (rmlui.active_menu_document.empty()) {
             rmlui.menu_open = false;
             rmlui.menu_transparent = false;
-            Key_SetDest(Key_GetDest() & ~KEY_MENU);
+            Key_SetDest(static_cast<keydest_t>(Key_GetDest() & ~KEY_MENU));
         }
         refresh_menu_mouse_position();
     }
@@ -655,7 +597,7 @@ void process_pending_shell_closes()
         } else if (rmlui.active_menu_document.empty() && !rmlui.crosshair_menu.IsVisible()) {
             rmlui.menu_open = false;
             rmlui.menu_transparent = false;
-            Key_SetDest(Key_GetDest() & ~KEY_MENU);
+            Key_SetDest(static_cast<keydest_t>(Key_GetDest() & ~KEY_MENU));
         }
         refresh_menu_mouse_position();
     }
@@ -1395,7 +1337,7 @@ void UI_Rml_ToggleSettingsMenu(void)
     if (rmlui.active_menu_document.empty() && !rmlui.crosshair_menu.IsVisible()) {
         rmlui.menu_open = false;
         rmlui.menu_transparent = false;
-        Key_SetDest(Key_GetDest() & ~KEY_MENU);
+        Key_SetDest(static_cast<keydest_t>(Key_GetDest() & ~KEY_MENU));
     } else {
         refresh_menu_mouse_position();
     }
@@ -1420,7 +1362,7 @@ bool UI_Rml_HandleKeyEvent(int key, bool down)
             if (rmlui.active_menu_document.empty() && !rmlui.crosshair_menu.IsVisible()) {
                 rmlui.menu_open = false;
                 rmlui.menu_transparent = false;
-                Key_SetDest(Key_GetDest() & ~KEY_MENU);
+                Key_SetDest(static_cast<keydest_t>(Key_GetDest() & ~KEY_MENU));
             } else {
                 refresh_menu_mouse_position();
             }
@@ -1431,14 +1373,14 @@ bool UI_Rml_HandleKeyEvent(int key, bool down)
             if (rmlui.active_menu_document.empty()) {
                 rmlui.menu_open = false;
                 rmlui.menu_transparent = false;
-                Key_SetDest(Key_GetDest() & ~KEY_MENU);
+                Key_SetDest(static_cast<keydest_t>(Key_GetDest() & ~KEY_MENU));
             } else {
                 refresh_menu_mouse_position();
             }
             return true;
         }
         UI_Rml_ForceMenuOff();
-        Key_SetDest(Key_GetDest() & ~KEY_MENU);
+        Key_SetDest(static_cast<keydest_t>(Key_GetDest() & ~KEY_MENU));
         return true;
     }
 

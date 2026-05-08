@@ -1,10 +1,16 @@
 #pragma once
 
 #ifdef __cplusplus
-struct cvar_s;
-typedef cvar_s cvar_t;
-#else
+extern "C" {
+#endif
 #include "shared/shared.h"
+#ifdef __cplusplus
+}
+#undef inline
+#undef min
+#undef max
+#undef DotProduct
+#undef CrossProduct
 #endif
 
 #ifdef __cplusplus

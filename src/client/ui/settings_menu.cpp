@@ -9,40 +9,24 @@
 #include <cstring>
 
 extern "C" {
-typedef int keydest_t;
-typedef struct cmdbuf_s cmdbuf_t;
-typedef enum {
-    FROM_MENU,
-    FROM_CONSOLE,
-    FROM_CMDLINE,
-    FROM_CODE
-} from_t;
-typedef struct cvar_s {
-    char *name;
-    char *string;
-    char *latched_string;
-    int flags;
-    int modified;
-    float value;
-    struct cvar_s *next;
-    int integer;
-    char *default_string;
-} cvar_t;
+#include "shared/shared.h"
+#include "common/cmd.h"
+#include "common/cvar.h"
 
-extern cmdbuf_t cmd_buffer;
-cvar_t *Cvar_Get(const char *name, const char *value, int flags);
-cvar_t *Cvar_WeakGet(const char *name);
-cvar_t *Cvar_Set(const char *var_name, const char *value);
-cvar_t *Cvar_SetEx(const char *var_name, const char *value, from_t from);
-void Cbuf_AddText(cmdbuf_t *buffer, const char *text);
 int Key_EnumBindings(int key, const char *binding);
-const char *Key_KeynumToString(int key);
+const char *Key_KeynumToString(int keynum);
 void Key_SetBinding(int key, const char *binding);
 void UI_StartSound(int sound);
-void Com_LPrintf(int type, const char *fmt, ...);
+void Com_LPrintf(print_type_t type, const char *fmt, ...);
 void CL_WriteConfig(void);
 extern cvar_t *ui_rmlui_debug;
 }
+
+#undef inline
+#undef min
+#undef max
+#undef DotProduct
+#undef CrossProduct
 
 using namespace SettingsWidgets;
 
@@ -67,8 +51,6 @@ constexpr int K_MWHEELUP = 211;
 constexpr int QMS_IN = 2;
 constexpr int QMS_MOVE = 3;
 constexpr int QMS_OUT = 4;
-constexpr int CVAR_ARCHIVE = 1;
-constexpr int PRINT_DEVELOPER = 2;
 
 using Option = SettingsMenu::Option;
 using Def = SettingsMenu::SettingDef;
@@ -125,7 +107,7 @@ const Option rml_crosshair_style_opts[] = { {"Classic", "0"}, {"Dot", "1"}, {"Cr
 #define TOG(tab, sec, label, cv, def) { tab, Kind::Toggle, sec, label, cv, def, 0, 1, 1, 0, false, 0, yes_no, 2, nullptr, nullptr }
 #define TOG_DESC(tab, sec, label, cv, def, desc) { tab, Kind::Toggle, sec, label, cv, def, 0, 1, 1, 0, false, 0, yes_no, 2, nullptr, desc }
 #define ITOG(tab, sec, label, cv, def) { tab, Kind::Toggle, sec, label, cv, def, 0, 1, 1, 0, true, 0, yes_no, 2, nullptr, nullptr }
-#define BIT(tab, sec, label, cv, def, bit, inv) { tab, Kind::Bitmask, sec, label, cv, def, 0, 1, 1, 0, inv, bit, yes_no, 2, nullptr, nullptr }
+#define SM_BIT(tab, sec, label, cv, def, bit, inv) { tab, Kind::Bitmask, sec, label, cv, def, 0, 1, 1, 0, inv, bit, yes_no, 2, nullptr, nullptr }
 #define SL(tab, sec, label, cv, def, mn, mx, st, dec) { tab, Kind::Slider, sec, label, cv, def, mn, mx, st, dec, false, 0, nullptr, 0, nullptr, nullptr }
 #define DD(tab, sec, label, cv, def, opts) { tab, Kind::Dropdown, sec, label, cv, def, 0, 0, 0, 0, false, 0, OPTS(opts), nullptr, nullptr }
 #define TXT(tab, sec, label, cv, def) { tab, Kind::Text, sec, label, cv, def, 0, 0, 0, 0, false, 0, nullptr, 0, nullptr, nullptr }
@@ -199,10 +181,10 @@ const Def settings_defs[] = {
     SL(SettingsTab::Effects, "Particles & Explosions", "Particle Emissive", "pt_particle_emissive", "10.0", 0, 50, .5f, 1),
     TOG(SettingsTab::Effects, "Particles & Explosions", "Explosion Sprites", "cl_explosion_sprites", "1"),
     SL(SettingsTab::Effects, "Particles & Explosions", "Explosion Frametime", "cl_explosion_frametime", "20", 10, 100, 1, 0),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Explosions", "cl_disable_explosions", "0", 0, true),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Explosions", "cl_disable_explosions", "0", 1, true),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Particles", "cl_disable_particles", "0", 0, true),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Trails", "cl_disable_particles", "0", 3, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Explosions", "cl_disable_explosions", "0", 0, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Explosions", "cl_disable_explosions", "0", 1, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Particles", "cl_disable_particles", "0", 0, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Trails", "cl_disable_particles", "0", 3, true),
     ITOG(SettingsTab::Effects, "Entity FX", "Glow on Items", "cl_noglow", "0"),
     ITOG(SettingsTab::Effects, "Entity FX", "Item Bobbing", "cl_nobob", "0"),
     TOG(SettingsTab::Effects, "Screen Effects", "Screen Blending", "tm_blend_enable", "1"),
@@ -350,7 +332,7 @@ const Def settings_defs[] = {
     DD(SettingsTab::Advanced, "Developer", "Ray Tracing API", "ray_tracing_api", "auto", rt_api_opts),
     DD(SettingsTab::Advanced, "Developer", "Tone Mapping Debug", "tm_debug", "0", tm_debug_opts),
     TOG(SettingsTab::Advanced, "Developer", "SVGF Gradient Overlay", "flt_show_gradients", "0"),
-    BIT(SettingsTab::Advanced, "Developer", "Fixed Albedo Debug", "flt_fixed_albedo", "0", 1, true),
+    SM_BIT(SettingsTab::Advanced, "Developer", "Fixed Albedo Debug", "flt_fixed_albedo", "0", 1, true),
     DD(SettingsTab::Advanced, "Developer", "Multi-GPU Support", "sli", "1", sli_opts),
 };
 
@@ -474,10 +456,10 @@ const Def vanilla_settings_defs[] = {
     SL(SettingsTab::Effects, "Particles & Explosions", "Particle Emissive", "pt_particle_emissive", "10.0", 0, 50, .5f, 1),
     TOG(SettingsTab::Effects, "Particles & Explosions", "Explosion Sprites", "cl_explosion_sprites", "1"),
     SL(SettingsTab::Effects, "Particles & Explosions", "Explosion Frametime", "cl_explosion_frametime", "20", 10, 100, 1, 0),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Explosions", "cl_disable_explosions", "0", 0, true),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Explosions", "cl_disable_explosions", "0", 1, true),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Particles", "cl_disable_particles", "0", 0, true),
-    BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Trails", "cl_disable_particles", "0", 3, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Explosions", "cl_disable_explosions", "0", 0, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Explosions", "cl_disable_explosions", "0", 1, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Grenade Particles", "cl_disable_particles", "0", 0, true),
+    SM_BIT(SettingsTab::Effects, "Particles & Explosions", "Rocket Trails", "cl_disable_particles", "0", 3, true),
     ITOG(SettingsTab::Effects, "Entity FX", "Glow on Items", "cl_noglow", "0"),
     ITOG(SettingsTab::Effects, "Entity FX", "Item Bobbing", "cl_nobob", "0"),
     TOG(SettingsTab::Effects, "Screen Effects", "Screen Blending", "tm_blend_enable", "1"),
@@ -500,7 +482,7 @@ const Def vanilla_settings_defs[] = {
     DD(SettingsTab::Developer, "Frame Debug", "Ray Tracing API", "ray_tracing_api", "auto", rt_api_opts),
     DD(SettingsTab::Developer, "Frame Debug", "Tone Mapping Debug", "tm_debug", "0", tm_debug_opts),
     TOG(SettingsTab::Developer, "Frame Debug", "SVGF Gradient Overlay", "flt_show_gradients", "0"),
-    BIT(SettingsTab::Developer, "Frame Debug", "Fixed Albedo Debug", "flt_fixed_albedo", "0", 1, true),
+    SM_BIT(SettingsTab::Developer, "Frame Debug", "Fixed Albedo Debug", "flt_fixed_albedo", "0", 1, true),
     DD(SettingsTab::Developer, "Frame Debug", "Multi-GPU Support", "sli", "1", sli_opts),
     TOG_DESC(SettingsTab::Developer, "NVIDIA Debug", "NVIDIA Streamline Debug Overlay", "r_streamline_imgui", "0",
              "Development builds only. Requires restart. Shows NVIDIA Streamline plugin debug panels for Reflex, DLSS, DLSS-G, and visual stats when available."),

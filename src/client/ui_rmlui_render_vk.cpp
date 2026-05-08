@@ -3,35 +3,11 @@
 #include <cstddef>
 
 extern "C" {
-typedef unsigned char byte;
-typedef int qhandle_t;
+#include "refresh/refresh.h"
+#include "common/zone.h"
 
-typedef struct cvar_s {
-    char *name;
-    char *string;
-    char *latched_string;
-    int flags;
-    int modified;
-    float value;
-    struct cvar_s *next;
-    int integer;
-} cvar_t;
-
-qhandle_t R_RegisterImage(const char *name, int type, int flags);
-qhandle_t R_RegisterRawImage(const char *name, int width, int height, byte *pic, int type, int flags);
-void R_UnregisterImage(qhandle_t handle);
-bool R_GetPicSize(int *w, int *h, qhandle_t pic);
 void R_DrawStretchPicUV_RTX(int x, int y, int w, int h, float s1, float t1, float s2, float t2, unsigned color, qhandle_t pic);
-void *Z_Malloc(size_t size);
-void Z_Free(void *ptr);
-void Com_LPrintf(int type, const char *fmt, ...);
 }
-
-#define IT_PIC       0
-#define IF_PERMANENT 1
-#define IF_SRGB      512
-#define PRINT_DEVELOPER 2
-#define PRINT_WARNING 3
 
 #include <RmlUi/Core/RenderInterface.h>
 #include <RmlUi/Core/Types.h>
@@ -172,7 +148,8 @@ public:
         white[1] = 255;
         white[2] = 255;
         white[3] = 255;
-        white_texture = R_RegisterRawImage("ui/rml/white", 1, 1, white, IT_PIC, IF_PERMANENT | IF_SRGB);
+        white_texture = R_RegisterRawImage("ui/rml/white", 1, 1, white, IT_PIC,
+                                           static_cast<imageflags_t>(IF_PERMANENT | IF_SRGB));
         if (!white_texture) {
             Z_Free(white);
         }
