@@ -712,6 +712,24 @@ void refresh_title_music()
     }
 }
 
+void rml_shutdown_hud_modules(void)
+{
+    rmlui.intro.Shutdown();
+    rmlui.settings_menu.Shutdown();
+    rmlui.crosshair_menu.Shutdown();
+    rmlui.crosshair.Shutdown();
+    rmlui.competitive_hud.Shutdown();
+}
+
+void rml_clear_listener_registry_and_documents(bool unload_context_documents)
+{
+    rmlui.listeners.clear();
+    if (unload_context_documents && rmlui.context) {
+        rmlui.context->UnloadAllDocuments();
+    }
+    rmlui.documents.clear();
+}
+
 } // namespace
 
 extern "C" {
@@ -832,13 +850,8 @@ void UI_Rml_Shutdown(void)
         return;
     }
     stop_title_music();
-    rmlui.intro.Shutdown();
-    rmlui.settings_menu.Shutdown();
-    rmlui.crosshair_menu.Shutdown();
-    rmlui.crosshair.Shutdown();
-    rmlui.competitive_hud.Shutdown();
-    rmlui.listeners.clear();
-    rmlui.documents.clear();
+    rml_shutdown_hud_modules();
+    rml_clear_listener_registry_and_documents(false);
     if (rmlui.context) {
         Rml::RemoveContext("q2rtx");
         rmlui.context = nullptr;
@@ -967,14 +980,8 @@ void UI_Rml_Reload(void)
     bool crosshair_menu_was_open = rmlui.crosshair_menu.IsVisible();
     bool settings_menu_was_open = rmlui.settings_menu.IsVisible();
     const bool intro_was_playing = rmlui.intro.IsPlaying();
-    rmlui.intro.Shutdown();
-    rmlui.settings_menu.Shutdown();
-    rmlui.crosshair_menu.Shutdown();
-    rmlui.crosshair.Shutdown();
-    rmlui.competitive_hud.Shutdown();
-    rmlui.listeners.clear();
-    rmlui.context->UnloadAllDocuments();
-    rmlui.documents.clear();
+    rml_shutdown_hud_modules();
+    rml_clear_listener_registry_and_documents(true);
     rmlui.menu_open = false;
     rmlui.active_menu_document.clear();
     rmlui.menu_stack.clear();
