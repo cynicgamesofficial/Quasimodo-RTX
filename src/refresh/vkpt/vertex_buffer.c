@@ -71,19 +71,19 @@ void vkpt_init_model_geometry(model_geometry_t* info, uint32_t max_geometries)
 
 void vkpt_destroy_model_geometry(model_geometry_t* info)
 {
-	if (!info->geometry_storage)
-		return;
-
-	Z_Freep((void**)&info->geometry_storage);
-	info->geometries = NULL;
-	info->build_ranges = NULL;
-	info->prim_counts = NULL;
-	info->prim_offsets = NULL;
-
 	if (info->accel)
 	{
 		qvkDestroyAccelerationStructureKHR(qvk.device, info->accel, NULL);
 		info->accel = NULL;
+	}
+
+	if (info->geometry_storage)
+	{
+		Z_Freep((void**)&info->geometry_storage);
+		info->geometries = NULL;
+		info->build_ranges = NULL;
+		info->prim_counts = NULL;
+		info->prim_offsets = NULL;
 	}
 }
 
