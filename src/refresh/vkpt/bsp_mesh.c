@@ -1983,6 +1983,15 @@ bsp_mesh_create_from_bsp(bsp_mesh_t *wm, bsp_t *bsp, const char* map_name)
 void
 bsp_mesh_destroy(bsp_mesh_t *wm)
 {
+	if (wm->models) {
+		for (int k = 0; k < wm->num_models; k++) {
+			Z_Free(wm->models[k].light_polys);
+			wm->models[k].light_polys = NULL;
+			wm->models[k].num_light_polys = 0;
+			wm->models[k].allocated_light_polys = 0;
+		}
+	}
+
 	Z_Free(wm->models);
 
 	Z_Free(wm->primitives);
