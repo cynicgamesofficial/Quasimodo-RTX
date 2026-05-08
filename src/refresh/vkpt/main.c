@@ -4170,6 +4170,7 @@ static void
 recreate_swapchain(void)
 {
 	if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
+	SL_NotifySwapchainResize();
 	vkpt_destroy_all(VKPT_INIT_SWAPCHAIN_RECREATE);
 	destroy_swapchain();
 	SDL_Vulkan_GetDrawableSize(qvk.window, &qvk.draw_width, &qvk.draw_height);
@@ -4378,6 +4379,12 @@ R_BeginFrame_RTX(void)
 				Com_Printf("DLSS: history reset due to extent change (render %ux%u -> %ux%u, output %ux%u -> %ux%u).\n",
 					dlss_prev_render.width, dlss_prev_render.height, qvk.extent_render.width, qvk.extent_render.height,
 					dlss_prev_output.width, dlss_prev_output.height, qvk.extent_unscaled.width, qvk.extent_unscaled.height);
+
+				/* Free old DLSS feature resources so the next evaluate can
+				 * reallocate at the new dimensions. slFreeResources requires
+				 * any pending DLSS evaluate to be flushed first. */
+				if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
+				SL_NotifyDLSSExtentChange();
 			}
 			dlss_reset_pending = true;
 			dlss_prev_render = qvk.extent_render;
@@ -4387,6 +4394,13 @@ R_BeginFrame_RTX(void)
 	}
 	else
 	{
+		if (dlss_prev_valid)
+		{
+			/* DLSS just turned off — free its resources so they don't sit
+			 * in VRAM while the user uses TAA/FSR/native paths. */
+			if (SL_vkDeviceWaitIdle) SL_vkDeviceWaitIdle(qvk.device); else vkDeviceWaitIdle(qvk.device);
+			SL_NotifyDLSSExtentChange();
+		}
 		dlss_prev_valid = false;
 	}
 

@@ -134,6 +134,19 @@ qboolean SLReflex_PostInit(VkInstance instance, VkPhysicalDevice physicalDevice,
 void     SLReflex_Shutdown(void);
 
 void     SLReflex_Sleep(void);
+
+/*
+ * Notify Streamline of swapchain recreation.
+ * Must be called after device is idle and before new resources are created.
+ */
+void     SL_NotifySwapchainResize(void);
+
+/*
+ * Notify Streamline that DLSS render/output extent or quality has changed.
+ * Must be called after the GPU is idle (vkDeviceWaitIdle) so it is safe to
+ * free DLSS feature resources. The next SLDLSS_Evaluate will reallocate.
+ */
+void     SL_NotifyDLSSExtentChange(void);
 void     SLReflex_SetMode(ReflexMode mode, uint32_t frameLimitUs);
 
 void     SLReflex_Marker_SimStart(void);

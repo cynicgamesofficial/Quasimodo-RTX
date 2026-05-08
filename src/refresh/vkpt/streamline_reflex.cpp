@@ -71,6 +71,7 @@ using Fn_slGetFeatureRequirements = sl::Result(sl::Feature, sl::FeatureRequireme
 using Fn_slSetTagForFrame      = sl::Result(const sl::FrameToken&, const sl::ViewportHandle&, const sl::ResourceTag*, uint32_t, sl::CommandBuffer*);
 using Fn_slSetConstants        = sl::Result(const sl::Constants&, const sl::FrameToken&, const sl::ViewportHandle&);
 using Fn_slEvaluateFeature     = sl::Result(sl::Feature, const sl::FrameToken&, const sl::BaseStructure**, uint32_t, sl::CommandBuffer*);
+using Fn_slFreeResources       = sl::Result(sl::Feature, const sl::ViewportHandle&);
 
 static Fn_slInit               *p_slInit;
 static Fn_slShutdown           *p_slShutdown;
@@ -82,6 +83,7 @@ static Fn_slGetFeatureRequirements *p_slGetFeatureRequirements;
 static Fn_slSetTagForFrame     *p_slSetTagForFrame;
 static Fn_slSetConstants       *p_slSetConstants;
 static Fn_slEvaluateFeature    *p_slEvaluateFeature;
+static Fn_slFreeResources      *p_slFreeResources;
 
 /* Dynamically-resolved feature functions */
 static PFun_slReflexGetState     *p_slReflexGetState;
@@ -95,6 +97,12 @@ static bool                       s_dlss_available;
 static bool                       s_dlss_requirements_valid;
 static sl::FeatureRequirements    s_dlss_requirements;
 static sl::ViewportHandle         s_dlss_viewport(0);
+
+static uint32_t                   s_dlss_output_width = 0;
+static uint32_t                   s_dlss_output_height = 0;
+/* Set to true once slEvaluateFeature has succeeded for kFeatureDLSS, so we
+ * know there are resources for slFreeResources to release. */
+static bool                       s_dlss_resources_allocated = false;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -260,6 +268,7 @@ static void clear_all(void)
     p_slSetTagForFrame     = nullptr;
     p_slSetConstants       = nullptr;
     p_slEvaluateFeature    = nullptr;
+    p_slFreeResources      = nullptr;
     p_slReflexGetState     = nullptr;
     p_slReflexSleep        = nullptr;
     p_slReflexSetOptions   = nullptr;
@@ -282,6 +291,9 @@ static void clear_all(void)
     s_num_plugin_paths = 0;
     s_dlss_available = false;
     s_dlss_requirements_valid = false;
+    s_dlss_resources_allocated = false;
+    s_dlss_output_width = 0;
+    s_dlss_output_height = 0;
     memset(&s_dlss_requirements, 0, sizeof(s_dlss_requirements));
     memset(&sl_reflex, 0, sizeof(sl_reflex));
     reflex_frame_id = 0;
@@ -347,6 +359,7 @@ extern "C" qboolean SLReflex_PreInit(void)
     p_slSetTagForFrame     = sl_get_proc<Fn_slSetTagForFrame>("slSetTagForFrame");
     p_slSetConstants       = sl_get_proc<Fn_slSetConstants>("slSetConstants");
     p_slEvaluateFeature    = sl_get_proc<Fn_slEvaluateFeature>("slEvaluateFeature");
+    p_slFreeResources      = sl_get_proc<Fn_slFreeResources>("slFreeResources");
 
     s_sl_vkGetDeviceProcAddr   = reinterpret_cast<PFN_vkGetDeviceProcAddr>(GetProcAddress(s_sl_module, "vkGetDeviceProcAddr"));
     s_sl_vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(s_sl_module, "vkGetInstanceProcAddr"));
@@ -537,6 +550,48 @@ extern "C" void SLReflex_Shutdown(void)
     Com_Printf("Streamline Reflex shut down.\n");
 }
 
+static void sl_free_dlss_resources_if_allocated(const char *context)
+{
+    if (!p_slFreeResources || !s_dlss_available)
+        return;
+    if (!s_dlss_resources_allocated)
+        return;
+
+    sl::Result res = p_slFreeResources(sl::kFeatureDLSS, s_dlss_viewport);
+    if (res != sl::Result::eOk)
+    {
+        Com_WPrintf("Streamline DLSS: slFreeResources failed (code %d) on %s.\n",
+                    (int)res, context ? context : "cleanup");
+    }
+    s_dlss_resources_allocated = false;
+}
+
+extern "C" void SL_NotifySwapchainResize(void)
+{
+    if (!s_preinit_done && !sl_reflex.initialized)
+        return;
+
+    s_frame_token = nullptr;
+
+    sl_free_dlss_resources_if_allocated("swapchain resize");
+
+    s_dlss_output_width = 0;
+    s_dlss_output_height = 0;
+}
+
+extern "C" void SL_NotifyDLSSExtentChange(void)
+{
+    if (!s_preinit_done && !sl_reflex.initialized)
+        return;
+
+    s_frame_token = nullptr;
+
+    sl_free_dlss_resources_if_allocated("extent change");
+
+    s_dlss_output_width = 0;
+    s_dlss_output_height = 0;
+}
+
 extern "C" void SLReflex_Sleep(void)
 {
     if (!sl_reflex.initialized || !p_slReflexSleep)
@@ -636,6 +691,7 @@ static sl::DLSSMode map_dlss_mode(streamline_dlss_quality_t quality)
 
 static bool ensure_frame_token_for_dlss(void)
 {
+    // Always get a fresh token; the shared s_frame_token is cleared on resize
     if (s_frame_token)
         return true;
 
@@ -730,6 +786,16 @@ extern "C" qboolean SLDLSS_Evaluate(const streamline_dlss_evaluate_params_t *par
 
     if (!params || !SLDLSS_IsAvailable())
         return qfalse;
+
+    /* Track output extent so we can detect changes between evaluates. The
+     * actual resource cleanup on extent change is performed by the engine
+     * via SL_NotifyDLSSExtentChange() while the device is idle. */
+    if (params->color_output_width != s_dlss_output_width ||
+        params->color_output_height != s_dlss_output_height)
+    {
+        s_dlss_output_width = params->color_output_width;
+        s_dlss_output_height = params->color_output_height;
+    }
 
     if (!ensure_frame_token_for_dlss()) {
         if (!warned_no_token) {
@@ -874,6 +940,8 @@ extern "C" qboolean SLDLSS_Evaluate(const streamline_dlss_evaluate_params_t *par
         return qfalse;
     }
     warned_evaluate = false;
+
+    s_dlss_resources_allocated = true;
 
     return qtrue;
 }
