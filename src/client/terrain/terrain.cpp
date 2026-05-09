@@ -38,6 +38,23 @@ static bool terrain_try_load_seam_meshes(void)
     return true;
 }
 
+static void terrain_phase4_refresh_chunks(void)
+{
+    if (!TerrainChunks_Build()) {
+        Com_EPrintf("[TERRAIN] chunk grid build failed\n");
+        return;
+    }
+
+    const jungle_document_t *d = TerrainJungle_GetLoaded();
+    if (d && d->terrain_scale_xy > 0.f && d->terrain_width >= 2 && d->terrain_height >= 2) {
+        vec3_t ref;
+        ref[0] = d->terrain_origin[0] + 0.5f * (float)(d->terrain_width - 1) * d->terrain_scale_xy;
+        ref[1] = d->terrain_origin[1] + 0.5f * (float)(d->terrain_height - 1) * d->terrain_scale_xy;
+        ref[2] = d->terrain_origin[2];
+        TerrainLOD_SetReferenceWorld(ref);
+    }
+}
+
 bool Terrain_Internal_GetActiveHeightfield(terrain_heightfield_cpu_t *out)
 {
     if (!out || !terrain_registered || !terrain_enable || !terrain_enable->integer)
@@ -145,6 +162,9 @@ static void Terrain_Cmd_Load_f(void)
 
     char err[512];
     TerrainJungle_UnloadAll();
+#if QUASIMODO_TERRAIN
+    TerrainChunks_Free();
+#endif
     terrain_loaded = false;
 
     if (!TerrainJungle_LoadFromVFS(vfs, err, sizeof err)) {
@@ -157,6 +177,7 @@ static void Terrain_Cmd_Load_f(void)
     terrain_loaded = true;
 #if QUASIMODO_TERRAIN
     terrain_try_load_seam_meshes();
+    terrain_phase4_refresh_chunks();
 #endif
     Com_Printf("[TERRAIN] loaded \"%s\"\n", vfs);
 }
@@ -195,6 +216,9 @@ static void Terrain_Cmd_Reload_f(void)
     Q_strlcpy(saved, terrain_last_jungle_vfs, sizeof saved);
 
     TerrainJungle_UnloadAll();
+#if QUASIMODO_TERRAIN
+    TerrainChunks_Free();
+#endif
     terrain_loaded = false;
 
     char err[512];
@@ -208,6 +232,7 @@ static void Terrain_Cmd_Reload_f(void)
     terrain_loaded = true;
 #if QUASIMODO_TERRAIN
     terrain_try_load_seam_meshes();
+    terrain_phase4_refresh_chunks();
 #endif
     Com_Printf("[TERRAIN] reloaded \"%s\"\n", saved);
 }
@@ -218,12 +243,16 @@ static void Terrain_Cmd_Info_f(void)
         Com_Printf("[TERRAIN] terrain system not initialized\n");
         return;
     }
+#if QUASIMODO_TERRAIN
+    TerrainDebug_PrintInfo();
+#else
     Com_Printf("[TERRAIN] terrain_enable: %d\n", Terrain_IsSubsystemEnabled() ? 1 : 0);
     Com_Printf("[TERRAIN] loaded: %s\n", terrain_loaded ? "yes" : "no");
     if (terrain_last_jungle_vfs[0])
         Com_Printf("[TERRAIN] last path: %s\n", terrain_last_jungle_vfs);
     if (terrain_loaded)
         TerrainJungle_PrintLoaded();
+#endif
 }
 
 static void Terrain_Cmd_Probe_f(void)
@@ -282,6 +311,8 @@ static void Terrain_Cmd_Probe_f(void)
             Com_Printf("[TERRAIN] sample normal: %.5f %.5f %.5f\n", n[0], n[1], n[2]);
         else
             Com_Printf("[TERRAIN] sample normal: (unavailable)\n");
+
+        TerrainDebug_ProbeExtra(cx, cy);
     } else {
         Com_Printf("[TERRAIN] height sampling: (no CPU heightfield)\n");
     }
@@ -302,7 +333,11 @@ static void Terrain_Cmd_DumpChunks_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain_dump_chunks not implemented yet\n");
+#if QUASIMODO_TERRAIN
+    TerrainDebug_DumpChunks();
+#else
+    Com_Printf("[TERRAIN] terrain_dump_chunks requires QUASIMODO_TERRAIN build\n");
+#endif
 }
 
 static void Terrain_Cmd_Rebuild_f(void)
@@ -315,7 +350,12 @@ static void Terrain_Cmd_Rebuild_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain_rebuild not implemented yet\n");
+#if QUASIMODO_TERRAIN
+    terrain_phase4_refresh_chunks();
+    Com_Printf("[TERRAIN] terrain_rebuild: chunk grid refreshed\n");
+#else
+    Com_Printf("[TERRAIN] terrain_rebuild requires QUASIMODO_TERRAIN build\n");
+#endif
 }
 
 static void Terrain_RegisterVarsAndCommands(void)
@@ -391,6 +431,9 @@ bool Terrain_LoadJungle(const char *mapname)
 
     char err[512];
     TerrainJungle_UnloadAll();
+#if QUASIMODO_TERRAIN
+    TerrainChunks_Free();
+#endif
     terrain_loaded = false;
 
     if (!TerrainJungle_LoadFromVFS(path, err, sizeof err)) {
@@ -403,6 +446,7 @@ bool Terrain_LoadJungle(const char *mapname)
     terrain_loaded = true;
 #if QUASIMODO_TERRAIN
     terrain_try_load_seam_meshes();
+    terrain_phase4_refresh_chunks();
 #endif
     return true;
 }
@@ -410,6 +454,7 @@ bool Terrain_LoadJungle(const char *mapname)
 void Terrain_Unload(void)
 {
 #if QUASIMODO_TERRAIN
+    TerrainChunks_Free();
     TerrainSeam_FreeAll();
 #endif
     TerrainJungle_UnloadAll();
@@ -427,6 +472,11 @@ void Terrain_PerFrameBegin(void)
     if (!terrain_registered || !Terrain_IsSubsystemEnabled()) {
         return;
     }
+#if QUASIMODO_TERRAIN
+    TerrainDebug_OnFrameBegin();
+    TerrainChunks_UpdateVisibility();
+    TerrainLOD_Update();
+#endif
 }
 
 void Terrain_PerFrameEnd(void)

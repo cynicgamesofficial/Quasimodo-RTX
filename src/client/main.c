@@ -3408,6 +3408,8 @@ unsigned CL_Frame(unsigned msec)
 
     cls.framecount++;
 
+    Terrain_PerFrameBegin();
+
     main_extra = 0;
     return 0;
 }

@@ -90,8 +90,59 @@ typedef struct jungle_document {
 #endif
 
 #if QUASIMODO_TERRAIN
+
+#include "terrain.h"
+
 bool TerrainHeightmap_ValidateCpuBuffer(int width, int height, const char *height_format, size_t pixel_bytes);
-#endif
+
+/*
+ * Min/max world Z over heightfield texels [sx0,sx1_ex) x [sy0,sy1_ex) in sample space.
+ */
+bool TerrainHeightmap_ComputeChunkZBounds(const terrain_heightfield_cpu_t *hf, int sx0, int sy0, int sx1_ex,
+                                          int sy1_ex, float *out_zmin, float *out_zmax);
+
+#define TERRAIN_LOD_LEVEL_CAP 16
+
+typedef struct terrain_chunk_s {
+    int grid_x;
+    int grid_y;
+    int flat_index;
+    int sample_x0;
+    int sample_y0;
+    int sample_x1_ex;
+    int sample_y1_ex;
+    vec3_t bounds_mins;
+    vec3_t bounds_maxs;
+    float z_min;
+    float z_max;
+    bool visible;
+    int lod_current;
+    int lod_target;
+    bool dirty;
+    bool dbg_seam_hint;
+} terrain_chunk_t;
+
+bool TerrainChunks_Build(void);
+void TerrainChunks_Free(void);
+void TerrainChunks_UpdateVisibility(void);
+
+int TerrainChunks_GetNumChunks(void);
+void TerrainChunks_GetGridDims(int *out_gw, int *out_gh);
+const terrain_chunk_t *TerrainChunks_GetArray(void);
+terrain_chunk_t *TerrainChunks_GetArrayMutable(void);
+bool TerrainChunks_FindAtWorldXY(float world_x, float world_y, int *out_chunk_index);
+
+void TerrainLOD_Update(void);
+void TerrainLOD_SetReferenceWorld(const vec3_t ref_org);
+
+void TerrainDebug_OnFrameBegin(void);
+void TerrainDebug_PrintInfo(void);
+void TerrainDebug_DumpChunks(void);
+void TerrainDebug_ProbeExtra(float world_x, float world_y);
+
+int TerrainSeam_GetCpuMeshCount(void);
+
+#endif /* QUASIMODO_TERRAIN */
 
 #ifdef __cplusplus
 }

@@ -7,6 +7,7 @@
 #include "terrain.h"
 #include "terrain_internal.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -250,6 +251,46 @@ extern "C" bool TerrainHeightmap_ValidateCpuBuffer(int width, int height, const 
     const size_t bps = terrain_hfmt_bytes(fmt);
     const size_t need = (size_t)width * (size_t)height * bps;
     return pixel_bytes >= need;
+}
+
+extern "C" bool TerrainHeightmap_ComputeChunkZBounds(const terrain_heightfield_cpu_t *hf, int sx0, int sy0,
+                                                     int sx1_ex, int sy1_ex, float *out_zmin, float *out_zmax)
+{
+    if (!hf || !hf->pixels || !out_zmin || !out_zmax)
+        return false;
+    if (sx0 < 0 || sy0 < 0 || sx1_ex <= sx0 || sy1_ex <= sy0)
+        return false;
+    if (sx1_ex > hf->width || sy1_ex > hf->height)
+        return false;
+
+    terrain_hfmt_t fmt;
+    if (!terrain_parse_height_format(hf->height_format, &fmt))
+        return false;
+
+    float zmin = FLT_MAX;
+    float zmax = -FLT_MAX;
+
+    for (int iy = sy0; iy < sy1_ex; iy++) {
+        for (int ix = sx0; ix < sx1_ex; ix++) {
+            float n = 0.f;
+            if (!terrain_decode_texel(hf, fmt, ix, iy, &n))
+                return false;
+            float z = 0.f;
+            if (!terrain_world_z_from_norm(hf, fmt, n, &z))
+                return false;
+            if (z < zmin)
+                zmin = z;
+            if (z > zmax)
+                zmax = z;
+        }
+    }
+
+    if (!(zmin <= zmax))
+        return false;
+
+    *out_zmin = zmin;
+    *out_zmax = zmax;
+    return true;
 }
 
 #endif /* QUASIMODO_TERRAIN */

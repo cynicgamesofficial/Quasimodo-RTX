@@ -155,10 +155,13 @@ SET(HEADERS_CLIENT
 IF(QUASIMODO_TERRAIN)
 	SET(SRC_TERRAIN
 		client/terrain/terrain.cpp
+		client/terrain/terrain_chunk.cpp
+		client/terrain/terrain_debug.cpp
 		client/terrain/terrain_jungle.cpp
 		client/terrain/terrain_asset.cpp
 		client/terrain/terrain_heightmap.cpp
 		client/terrain/terrain_collision.cpp
+		client/terrain/terrain_lod.cpp
 		client/terrain/terrain_seam.cpp
 	)
 	SET(HEADERS_TERRAIN

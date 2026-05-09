@@ -5,6 +5,7 @@
  */
 
 #include "terrain.h"
+#include "terrain_internal.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -445,6 +446,11 @@ bool TerrainSeam_LoadFromPatchPaths(const char *const *paths, int count)
     }
 
     return true;
+}
+
+int TerrainSeam_GetCpuMeshCount(void)
+{
+    return g_seam_mesh_count;
 }
 
 #endif /* QUASIMODO_TERRAIN */
