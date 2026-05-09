@@ -50,6 +50,7 @@ extern "C" void UI_Rml_SetMenuState(int menu_type, bool paused);
 #include <vector>
 
 cvar_t *ui_rmlui;
+cvar_t *ui_splash;
 cvar_t *ui_rmlui_debug;
 cvar_t *ui_rmlui_show_bounds;
 static cvar_t *ui_rmlui_skip_intro;
@@ -742,6 +743,7 @@ bool UI_Rml_IsEnabled(void)
 void UI_Rml_Init(void)
 {
     ui_rmlui = Cvar_Get("ui_rmlui", "1", CVAR_ARCHIVE);
+    ui_splash = Cvar_Get("ui_splash", "0", CVAR_ARCHIVE);
     ui_rmlui_debug = Cvar_Get("ui_rmlui_debug", "0", 0);
     ui_rmlui_show_bounds = Cvar_Get("ui_rmlui_show_bounds", "0", 0);
     ui_rmlui_skip_intro = Cvar_Get("ui_rmlui_skip_intro", "0", 0);
@@ -807,7 +809,10 @@ void UI_Rml_Init(void)
 
     rmlui.initialized = true;
     rmlui.intro_done = false;
-    if (ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer) {
+    if (!ui_splash || !ui_splash->integer) {
+        rmlui.intro_done = true;
+        debug_log("RmlUi: startup splash disabled (ui_splash 0)\n");
+    } else if (ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer) {
         rmlui.intro_done = true;
         debug_log("RmlUi: intro skipped by ui_rmlui_skip_intro\n");
     } else if (!rmlui.intro.Init(rmlui.context, []() {
@@ -985,7 +990,7 @@ void UI_Rml_Reload(void)
     rmlui.menu_open = false;
     rmlui.active_menu_document.clear();
     rmlui.menu_stack.clear();
-    if (intro_was_playing && !(ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer)) {
+    if (intro_was_playing && ui_splash && ui_splash->integer && !(ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer)) {
         rmlui.intro_done = false;
         if (!rmlui.intro.Init(rmlui.context, []() {
                 rmlui.intro_done = true;
@@ -998,6 +1003,9 @@ void UI_Rml_Reload(void)
         })) {
             rmlui.intro_done = true;
         }
+    } else if (!ui_splash || !ui_splash->integer) {
+        rmlui.intro_done = true;
+        debug_log("RmlUi: intro reload: startup splash disabled (ui_splash 0)\n");
     } else if (ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer) {
         rmlui.intro_done = true;
         debug_log("RmlUi: intro reload skipped by ui_rmlui_skip_intro\n");

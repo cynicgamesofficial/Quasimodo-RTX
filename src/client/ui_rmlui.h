@@ -37,6 +37,7 @@ typedef struct ui_rml_hud_state_s {
 } ui_rml_hud_state_t;
 
 extern cvar_t *ui_rmlui;
+extern cvar_t *ui_splash;
 extern cvar_t *ui_rmlui_debug;
 extern cvar_t *ui_rmlui_show_bounds;
 extern cvar_t *cl_crosshair_code;
