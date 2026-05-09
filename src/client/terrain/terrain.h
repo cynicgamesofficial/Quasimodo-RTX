@@ -94,6 +94,14 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
 
 void TerrainSeam_FreeAll(void);
 bool TerrainSeam_LoadFromPatchPaths(const char *const *paths, int count);
+
+/* Phase 6A terrain water (optional jungle-driven plane). */
+void TerrainWater_Init(void);
+void TerrainWater_Shutdown(void);
+void TerrainWater_OnMapLoadedVk(const char *mapname);
+void TerrainWater_OnMapUnloadVk(void);
+void TerrainWater_BuildVk(void);
+bool TerrainWater_IsUnderwater(const vec3_t pos);
 #endif
 
 #ifdef __cplusplus

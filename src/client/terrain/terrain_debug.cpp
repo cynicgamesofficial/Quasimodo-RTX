@@ -125,12 +125,6 @@ void TerrainDebug_PrintInfo(void)
         Com_Printf("[TERRAIN] seam patch refs (jungle): %d\n", d->seam_patch_paths_count);
     Com_Printf("[TERRAIN] seam CPU meshes (tessellated): %d\n", TerrainSeam_GetCpuMeshCount());
 
-    Com_Printf("[TERRAIN] water jungle: enabled=%d level=%.3f\n", d && d->water_enabled ? 1 : 0,
-               d ? d->water_level : 0.f);
-    Com_Printf("[TERRAIN] water cvar terrain_water: %d terrain_water_level: %.3f\n",
-               terrain_water && terrain_water->integer ? 1 : 0,
-               terrain_water_level ? terrain_water_level->value : 0.f);
-
     Com_Printf("[TERRAIN] debug show state (synced): chunks=%d lod=%d seams=%d\n", s_dbg_show_chunks,
                s_dbg_show_lod, s_dbg_show_seams);
 

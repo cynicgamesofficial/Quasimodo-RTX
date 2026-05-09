@@ -156,6 +156,7 @@ IF(QUASIMODO_TERRAIN)
 	SET(SRC_TERRAIN
 		client/terrain/terrain.cpp
 		client/terrain/terrain_render.cpp
+		client/terrain/terrain_water.cpp
 		client/terrain/terrain_chunk.cpp
 		client/terrain/terrain_debug.cpp
 		client/terrain/terrain_jungle.cpp

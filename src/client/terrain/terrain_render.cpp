@@ -21,6 +21,22 @@ extern "C" {
 #include "common/cvar.h"
 #include "common/zone.h"
 
+extern void TerrainWater_DestroyVk(void);
+extern bool TerrainWater_ShouldBuildPlaneGpu(void);
+extern bool TerrainWater_SetupWaterBlasGeometry(int chunk_prim_end, size_t *vbo_size);
+extern void TerrainWater_FillPlaneStaging(prim_positions_t *dst_pos, VboPrimitive *dst_prim, int prim_base,
+                                          const terrain_heightfield_cpu_t *hf, float uv_scale);
+extern void TerrainWater_CreateWaterBlas(VkBuffer buffer);
+extern void TerrainWater_BuildWaterBlas(VkCommandBuffer cmd_buf, const BufferResource_t *pos_buf);
+extern void TerrainWater_BuildVk(void);
+extern void TerrainWater_OnGpuUploadFinished(void);
+extern void TerrainWater_InstanceBLAS_Vk(void);
+extern void TerrainWater_DebugAppendInfo(void);
+extern void TerrainWater_Init(void);
+extern void TerrainWater_Shutdown(void);
+extern void TerrainWater_OnMapLoadedVk(const char *mapname);
+extern void TerrainWater_OnMapUnloadVk(void);
+
 extern cvar_t *terrain_enable;
 extern cvar_t *terrain_rtx_instance; /* defined in terrain.cpp */
 extern cvar_t *terrain_uv_scale;
@@ -63,6 +79,8 @@ static void terrain_gpu_free_all(void)
     else
         vkDeviceWaitIdle(qvk.device);
 
+    TerrainWater_DestroyVk();
+
     if (s_chunk_geoms && s_chunk_geom_slots > 0) {
         for (int i = 0; i < s_chunk_geom_slots; i++)
             vkpt_destroy_model_geometry(&s_chunk_geoms[i]);
@@ -80,7 +98,7 @@ static void terrain_gpu_free_all(void)
     s_last_terrain_tlas_instances = 0;
 }
 
-static void terrain_suballocate_blas_memory(model_geometry_t *info, size_t *vbo_size, const char *model_name)
+void TerrainRender_SuballocateBlasMemory(model_geometry_t *info, size_t *vbo_size, const char *model_name)
 {
     VkAccelerationStructureBuildSizesInfoKHR build_sizes = {};
     build_sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
@@ -112,7 +130,7 @@ static void terrain_suballocate_blas_memory(model_geometry_t *info, size_t *vbo_
     }
 }
 
-static void terrain_create_model_blas(model_geometry_t *info, VkBuffer buffer, const char *name)
+void TerrainRender_CreateModelBlas(model_geometry_t *info, VkBuffer buffer, const char *name)
 {
     if (info->num_geometries == 0)
         return;
@@ -142,8 +160,8 @@ static void terrain_create_model_blas(model_geometry_t *info, VkBuffer buffer, c
     }
 }
 
-static void terrain_build_model_blas(VkCommandBuffer cmd_buf, model_geometry_t *info, size_t first_vertex_offset,
-                                     const BufferResource_t *buffer)
+void TerrainRender_BuildModelBlas(VkCommandBuffer cmd_buf, model_geometry_t *info, size_t first_vertex_offset,
+                                  const BufferResource_t *buffer)
 {
     if (!info->accel)
         return;
@@ -271,8 +289,22 @@ static uint32_t terrain_encode_normal_vec(const vec3_t normal)
 
 static uint32_t terrain_flat_material_flags(void)
 {
-    pbr_material_t *mat = MAT_Find("textures/base_wall/concrete", IT_WALL, IF_NONE);
-    return mat ? mat->flags : MATERIAL_KIND_REGULAR;
+    /*
+     * MAT_Find passes names to IMG_Find; image paths must include an extension
+     * (see images.c find_or_load_image). BSP builds paths like textures/.../*.wal.
+     * Names below match entries in baseq2/materials/baseq2.mat (stock maps textures).
+     */
+    static const char *const k_fallbacks[] = {
+        "textures/e1u1/floor3_2.wal",
+        "textures/e1u1/floor3_1.wal",
+        "textures/e1u1/floor1_3.wal",
+    };
+    for (size_t i = 0; i < sizeof(k_fallbacks) / sizeof(k_fallbacks[0]); i++) {
+        pbr_material_t *mat = MAT_Find(k_fallbacks[i], IT_WALL, IF_NONE);
+        if (mat)
+            return mat->flags;
+    }
+    return MATERIAL_KIND_REGULAR | (1u & MATERIAL_INDEX_MASK);
 }
 
 static void terrain_vertex_normal(const terrain_heightfield_cpu_t *hf, float wx, float wy, vec3_t out_n)
@@ -429,23 +461,34 @@ static VkResult terrain_upload_positions_and_blas(void)
         return VK_SUCCESS;
     }
 
-    if ((size_t)total_prims > ((size_t)1 << 26) / sizeof(VboPrimitive)) {
-        Com_WPrintf("[TERRAIN] terrain primitive count %d too large for GPU upload.\n", total_prims);
+    const uint32_t mat_flags = terrain_flat_material_flags();
+    const float uv_scale = (terrain_uv_scale && terrain_uv_scale->value > 0.f) ? terrain_uv_scale->value : (1.f / 128.f);
+
+    const int water_prim_count = TerrainWater_ShouldBuildPlaneGpu() ? 2 : 0;
+    const int total_all_prims = total_prims + water_prim_count;
+
+    if ((size_t)total_all_prims > ((size_t)1 << 26) / sizeof(VboPrimitive)) {
+        Com_WPrintf("[TERRAIN] terrain+water primitive count %d too large for GPU upload.\n", total_all_prims);
         terrain_gpu_free_all();
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
 
-    const uint32_t mat_flags = terrain_flat_material_flags();
-    const float uv_scale = (terrain_uv_scale && terrain_uv_scale->value > 0.f) ? terrain_uv_scale->value : (1.f / 128.f);
-
-    size_t vbo_size = (size_t)total_prims * sizeof(prim_positions_t);
+    size_t vbo_size = (size_t)total_all_prims * sizeof(prim_positions_t);
     for (int i = 0; i < nchunks; i++) {
         char label[64];
         Q_snprintf(label, sizeof label, "terrain:blas[%d]", i);
-        terrain_suballocate_blas_memory(&s_chunk_geoms[i], &vbo_size, label);
+        TerrainRender_SuballocateBlasMemory(&s_chunk_geoms[i], &vbo_size, label);
     }
 
-    const size_t prim_sz = (size_t)total_prims * sizeof(VboPrimitive);
+    if (water_prim_count > 0) {
+        if (!TerrainWater_SetupWaterBlasGeometry(total_prims, &vbo_size)) {
+            Com_WPrintf("[TERRAIN] water BLAS sizing failed; aborting terrain GPU upload.\n");
+            terrain_gpu_free_all();
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+    }
+
+    const size_t prim_sz = (size_t)total_all_prims * sizeof(VboPrimitive);
 
     VkResult res =
         buffer_create(&s_terrain_pos_buf, vbo_size,
@@ -483,13 +526,16 @@ static VkResult terrain_upload_positions_and_blas(void)
     for (int i = 0; i < nchunks; i++) {
         char label[64];
         Q_snprintf(label, sizeof label, "terrain:blas[%d]", i);
-        terrain_create_model_blas(&s_chunk_geoms[i], s_terrain_pos_buf.buffer, label);
+        TerrainRender_CreateModelBlas(&s_chunk_geoms[i], s_terrain_pos_buf.buffer, label);
         if (s_chunk_geoms[i].accel)
             s_chunks_with_blas++;
     }
 
+    if (water_prim_count > 0)
+        TerrainWater_CreateWaterBlas(s_terrain_pos_buf.buffer);
+
     BufferResource_t staging_buffer;
-    res = buffer_create(&staging_buffer, (size_t)total_prims * sizeof(prim_positions_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    res = buffer_create(&staging_buffer, (size_t)total_all_prims * sizeof(prim_positions_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (res != VK_SUCCESS) {
         terrain_gpu_free_all();
@@ -517,6 +563,9 @@ static VkResult terrain_upload_positions_and_blas(void)
         terrain_fill_chunk_primitives(&hf, &chunks[i], staging_prims, prim_write, mat_flags, uv_scale);
         prim_write += nt;
     }
+    if (water_prim_count > 0)
+        TerrainWater_FillPlaneStaging(staging_positions, staging_prims, total_prims, &hf, uv_scale);
+
     buffer_unmap(&staging_buffer);
     buffer_unmap(&staging_prim);
 
@@ -557,7 +606,10 @@ static VkResult terrain_upload_positions_and_blas(void)
                          0, 0, NULL, 2, barriers, 0, NULL);
 
     for (int i = 0; i < nchunks; i++)
-        terrain_build_model_blas(cmd_buf, &s_chunk_geoms[i], 0, &s_terrain_pos_buf);
+        TerrainRender_BuildModelBlas(cmd_buf, &s_chunk_geoms[i], 0, &s_terrain_pos_buf);
+
+    if (water_prim_count > 0)
+        TerrainWater_BuildWaterBlas(cmd_buf, &s_terrain_pos_buf);
 
     vkpt_submit_command_buffer(cmd_buf, qvk.queue_graphics, (1 << qvk.device_count) - 1, 0, NULL, NULL, NULL, 0, NULL,
                                NULL, NULL);
@@ -572,15 +624,19 @@ static VkResult terrain_upload_positions_and_blas(void)
 
     vkpt_write_terrain_primitive_buffer_descriptor(s_terrain_prim_buf.buffer, (VkDeviceSize)prim_sz);
 
+    TerrainWater_BuildVk();
+    TerrainWater_OnGpuUploadFinished();
+
     s_terrain_gpu_bytes = (VkDeviceSize)s_terrain_pos_buf.size;
     s_terrain_prim_bytes = (VkDeviceSize)prim_sz;
-    s_terrain_prim_count = total_prims;
+    s_terrain_prim_count = total_all_prims;
     s_chunks_with_gpu_positions = chunks_with_tris;
     return VK_SUCCESS;
 }
 
 VkResult Terrain_InitVk(void)
 {
+    TerrainWater_Init();
     s_terrain_vk_ready = true;
     return VK_SUCCESS;
 }
@@ -588,6 +644,7 @@ VkResult Terrain_InitVk(void)
 VkResult Terrain_DestroyVk(void)
 {
     terrain_gpu_free_all();
+    TerrainWater_Shutdown();
     s_terrain_vk_ready = false;
     return VK_SUCCESS;
 }
@@ -596,13 +653,12 @@ void Terrain_OnMapUnload_Vk(void)
 {
     if (!s_terrain_vk_ready)
         return;
+    TerrainWater_OnMapUnloadVk();
     terrain_gpu_free_all();
 }
 
 void Terrain_OnMapLoaded_Vk(const char *mapname)
 {
-    (void)mapname;
-
     if (!s_terrain_vk_ready)
         return;
     if (!terrain_enable || !terrain_enable->integer)
@@ -611,6 +667,8 @@ void Terrain_OnMapLoaded_Vk(const char *mapname)
         terrain_gpu_free_all();
         return;
     }
+
+    TerrainWater_OnMapLoadedVk(mapname);
 
     VkResult r = terrain_upload_positions_and_blas();
     if (r != VK_SUCCESS)
@@ -670,6 +728,8 @@ void Terrain_InstanceBLAS_Vk(void)
         submitted++;
     }
 
+    TerrainWater_InstanceBLAS_Vk();
+
     s_last_terrain_tlas_instances = submitted;
 }
 
@@ -685,8 +745,9 @@ void TerrainRender_DebugAppendInfo(void)
     Com_Printf("[TERRAIN] terrain GPU bytes (position buffer): %llu\n", (unsigned long long)s_terrain_gpu_bytes);
     Com_Printf("[TERRAIN] terrain GPU bytes (primitive buffer): %llu\n", (unsigned long long)s_terrain_prim_bytes);
     Com_Printf("[TERRAIN] terrain primitive count: %d\n", s_terrain_prim_count);
-    Com_Printf("[TERRAIN] TLAS terrain instances submitted (last frame): %d\n", s_last_terrain_tlas_instances);
-    Com_Printf("[TERRAIN] material mode: flat default (MAT_Find textures/base_wall/concrete)\n");
+    Com_Printf("[TERRAIN] TLAS terrain chunk instances submitted (last frame): %d\n", s_last_terrain_tlas_instances);
+    Com_Printf("[TERRAIN] material mode: flat default (stock floor *.wal from baseq2.mat)\n");
+    TerrainWater_DebugAppendInfo();
 }
 
 } /* extern "C" */

@@ -180,6 +180,7 @@ static void Terrain_Cmd_Load_f(void)
 #if QUASIMODO_TERRAIN
     terrain_try_load_seam_meshes();
     terrain_phase4_refresh_chunks();
+    TerrainWater_OnMapLoadedVk(NULL);
 #endif
     Com_Printf("[TERRAIN] loaded \"%s\"\n", vfs);
 }
@@ -235,6 +236,7 @@ static void Terrain_Cmd_Reload_f(void)
 #if QUASIMODO_TERRAIN
     terrain_try_load_seam_meshes();
     terrain_phase4_refresh_chunks();
+    TerrainWater_OnMapLoadedVk(NULL);
 #endif
     Com_Printf("[TERRAIN] reloaded \"%s\"\n", saved);
 }
@@ -455,6 +457,7 @@ bool Terrain_LoadJungle(const char *mapname)
 #if QUASIMODO_TERRAIN
     terrain_try_load_seam_meshes();
     terrain_phase4_refresh_chunks();
+    TerrainWater_OnMapLoadedVk(NULL);
 #endif
     return true;
 }
@@ -462,6 +465,7 @@ bool Terrain_LoadJungle(const char *mapname)
 void Terrain_Unload(void)
 {
 #if QUASIMODO_TERRAIN
+    TerrainWater_OnMapUnloadVk();
     TerrainChunks_Free();
     TerrainSeam_FreeAll();
 #endif
