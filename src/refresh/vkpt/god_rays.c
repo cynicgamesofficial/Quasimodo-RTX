@@ -45,6 +45,7 @@ static void create_pipeline_layout(void);
 static void create_pipelines(void);
 static void create_descriptor_set(void);
 static void update_descriptor_set(void);
+static void god_rays_destroy_shader_resources(void);
 
 extern cvar_t *physical_sky_space;
 
@@ -84,8 +85,16 @@ VkResult vkpt_initialize_god_rays(void)
 
 VkResult vkpt_destroy_god_rays(void)
 {
-	vkDestroySampler(qvk.device, god_rays.shadow_sampler, NULL);
-	vkDestroyDescriptorPool(qvk.device, god_rays.descriptor_pool, NULL);
+	if (god_rays.shadow_sampler != VK_NULL_HANDLE) {
+		vkDestroySampler(qvk.device, god_rays.shadow_sampler, NULL);
+		god_rays.shadow_sampler = VK_NULL_HANDLE;
+	}
+
+	if (god_rays.descriptor_pool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(qvk.device, god_rays.descriptor_pool, NULL);
+		god_rays.descriptor_pool = VK_NULL_HANDLE;
+		god_rays.descriptor_set = VK_NULL_HANDLE;
+	}
 
 	return VK_SUCCESS;
 }
@@ -104,24 +113,34 @@ VkResult vkpt_god_rays_create_pipelines(void)
 
 VkResult vkpt_god_rays_destroy_pipelines(void)
 {
+	god_rays_destroy_shader_resources();
+	return VK_SUCCESS;
+}
+
+static void god_rays_destroy_shader_resources(void)
+{
 	for (size_t i = 0; i < LENGTH(god_rays.pipelines); i++) {
-		if (god_rays.pipelines[i]) {
+		if (god_rays.pipelines[i] != VK_NULL_HANDLE) {
 			vkDestroyPipeline(qvk.device, god_rays.pipelines[i], NULL);
-			god_rays.pipelines[i] = NULL;
+			god_rays.pipelines[i] = VK_NULL_HANDLE;
 		}
 	}
 
-	if (god_rays.pipeline_layout) {
+	if (god_rays.pipeline_layout != VK_NULL_HANDLE) {
 		vkDestroyPipelineLayout(qvk.device, god_rays.pipeline_layout, NULL);
-		god_rays.pipeline_layout = NULL;
-	}
-	
-	if (god_rays.descriptor_set_layout) {
-		vkDestroyDescriptorSetLayout(qvk.device, god_rays.descriptor_set_layout, NULL);
-		god_rays.descriptor_set_layout = NULL;
+		god_rays.pipeline_layout = VK_NULL_HANDLE;
 	}
 
-	return VK_SUCCESS;
+	if (god_rays.descriptor_pool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(qvk.device, god_rays.descriptor_pool, NULL);
+		god_rays.descriptor_pool = VK_NULL_HANDLE;
+		god_rays.descriptor_set = VK_NULL_HANDLE;
+	}
+
+	if (god_rays.descriptor_set_layout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(qvk.device, god_rays.descriptor_set_layout, NULL);
+		god_rays.descriptor_set_layout = VK_NULL_HANDLE;
+	}
 }
 
 VkResult
