@@ -79,6 +79,7 @@ void TerrainDebug_PrintInfo(void)
     Com_Printf("[TERRAIN] q2rtxded terrain collision: deferred (dedicated server has no terrain .jungle/CPU data in this build)\n");
     Com_Printf("[TERRAIN] point contents: deferred (no terrain solid/underfoot query in Phase 7B)\n");
     Com_Printf("[TERRAIN] seam collision: deferred (no .patch on jungletest; no seam raycast API)\n");
+    Com_Printf("[TERRAIN] Phase 8B materials: CPU dominant channel → per-triangle material_id; shader splat blending deferred.\n");
 
     const jungle_document_t *d = TerrainJungle_GetLoaded();
     if (d) {
@@ -99,6 +100,14 @@ void TerrainDebug_PrintInfo(void)
         Com_Printf("[TERRAIN] lod_count (jungle): %d (effective cap %d)\n", d->terrain_lod_count,
                    terrain_effective_lod_cap(d));
         Com_Printf("[TERRAIN] LOD reference: heightfield XY center (Phase 4); camera/player-driven LOD deferred.\n");
+        Com_Printf("[TERRAIN] jungle terrain.materials (inline strings): %d\n", d->terrain_materials_count);
+        Com_Printf("[TERRAIN] jungle terrain.splatmap path: %s\n",
+                   d->terrain_splatmap[0] ? d->terrain_splatmap : "(none)");
+        if (d->cpu_splat && d->cpu_splat_bytes > 0)
+            Com_Printf("[TERRAIN] CPU splatmap loaded: yes (%dx%d comp=%d)\n", d->cpu_splat_w, d->cpu_splat_h,
+                       d->cpu_splat_comp);
+        else
+            Com_Printf("[TERRAIN] CPU splatmap loaded: no\n");
     } else {
         Com_Printf("[TERRAIN] jungle document: (not resident)\n");
     }
@@ -186,6 +195,7 @@ void TerrainDebug_ProbeExtra(float world_x, float world_y)
             const terrain_chunk_t *c = &arr[ci];
             Com_Printf("[TERRAIN] probe chunk flat_index=%d grid=(%d,%d) lod_cur=%d lod_tgt=%d visible=%d\n", ci,
                        c->grid_x, c->grid_y, c->lod_current, c->lod_target, c->visible ? 1 : 0);
+            TerrainRender_DebugProbeSplatWorld(world_x, world_y);
             return;
         }
     }

@@ -107,6 +107,8 @@ typedef struct terrain_chunk_s {
     int grid_x;
     int grid_y;
     int flat_index;
+    /* Heightfield sample indices: x in [sample_x0, sample_x1_ex), y in [sample_y0, sample_y1_ex) — includes
+     * shared boundary row/col with neighbors so quads are not missing between chunks. */
     int sample_x0;
     int sample_y0;
     int sample_x1_ex;
@@ -141,7 +143,11 @@ void TerrainDebug_DumpChunks(void);
 void TerrainDebug_ProbeExtra(float world_x, float world_y);
 
 void TerrainRender_DebugAppendInfo(void);
+/* Phase 8B: optional splat probe line when CPU splat exists */
+void TerrainRender_DebugProbeSplatWorld(float world_x, float world_y);
 void Terrain_InstanceBLAS_Vk(void);
+
+void Terrain_RunDeferredGpuUploadIfAny(void);
 
 int TerrainSeam_GetCpuMeshCount(void);
 

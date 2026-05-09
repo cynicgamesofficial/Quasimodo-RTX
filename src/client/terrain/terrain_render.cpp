@@ -13,6 +13,8 @@
 
 #if QUASIMODO_TERRAIN
 
+extern const jungle_document_t *TerrainJungle_GetLoaded(void);
+
 extern "C" {
 #include "../../refresh/vkpt/vkpt.h"
 #include "../../refresh/vkpt/material.h"
@@ -20,6 +22,7 @@ extern "C" {
 #include "common/common.h"
 #include "common/cvar.h"
 #include "common/zone.h"
+#include "system/system.h"
 
 extern void TerrainWater_DestroyVk(void);
 extern bool TerrainWater_ShouldBuildPlaneGpu(void);
@@ -38,6 +41,8 @@ extern void TerrainWater_OnMapLoadedVk(const char *mapname);
 extern void TerrainWater_OnMapUnloadVk(void);
 
 extern cvar_t *terrain_enable;
+extern cvar_t *terrain_debug;
+extern cvar_t *terrain_build_blas_on_load;
 extern cvar_t *terrain_rtx_instance; /* defined in terrain.cpp */
 extern cvar_t *terrain_uv_scale;
 
@@ -59,6 +64,7 @@ static int s_terrain_prim_count = 0;
 static int s_last_terrain_tlas_instances = 0;
 static int s_terrain_tlas_budget_warn = 0;
 static bool s_terrain_vk_ready = false;
+static bool s_defer_terrain_gpu_upload = false;
 
 static const mat4 terrain_identity_transform = {
     {1.f, 0.f, 0.f, 0.f},
@@ -80,6 +86,8 @@ static void terrain_gpu_free_all(void)
         vkDeviceWaitIdle(qvk.device);
 
     TerrainWater_DestroyVk();
+
+    s_defer_terrain_gpu_upload = false;
 
     if (s_chunk_geoms && s_chunk_geom_slots > 0) {
         for (int i = 0; i < s_chunk_geom_slots; i++)
@@ -307,6 +315,114 @@ static uint32_t terrain_flat_material_flags(void)
     return MATERIAL_KIND_REGULAR | (1u & MATERIAL_INDEX_MASK);
 }
 
+#define TERRAIN_MAT_CHANNELS_MAX 4
+
+static uint32_t s_tr_mat_chan[TERRAIN_MAT_CHANNELS_MAX];
+static int s_tr_mat_chan_count;
+static int s_tr_mat_inline_count;
+static uint32_t s_tr_mat_fallback_flags;
+
+static void terrain_resolve_material_palette(const jungle_document_t *doc)
+{
+    memset(s_tr_mat_chan, 0, sizeof(s_tr_mat_chan));
+    s_tr_mat_chan_count = 0;
+    s_tr_mat_inline_count = doc ? doc->terrain_materials_count : 0;
+    s_tr_mat_fallback_flags = terrain_flat_material_flags();
+
+    if (!doc || doc->terrain_materials_count <= 0 || !doc->terrain_materials)
+        return;
+
+    uint32_t warn_once = 0;
+    const int n_take = doc->terrain_materials_count < TERRAIN_MAT_CHANNELS_MAX ? doc->terrain_materials_count
+                                                                                : TERRAIN_MAT_CHANNELS_MAX;
+    if (doc->terrain_materials_count > TERRAIN_MAT_CHANNELS_MAX && terrain_enable && terrain_enable->integer) {
+        static bool s_many_mat_warn;
+        if (!s_many_mat_warn) {
+            Com_WPrintf("[TERRAIN] terrain.materials lists %d entries; using first %d only.\n",
+                        doc->terrain_materials_count, TERRAIN_MAT_CHANNELS_MAX);
+            s_many_mat_warn = true;
+        }
+    }
+
+    for (int i = 0; i < n_take; i++) {
+        const char *path = doc->terrain_materials[i];
+        if (!path || !path[0]) {
+            if (!(warn_once & (1u << i))) {
+                warn_once |= (1u << i);
+                Com_WPrintf("[TERRAIN] terrain.materials[%d]: empty path; using stock fallback\n", i);
+            }
+            s_tr_mat_chan[s_tr_mat_chan_count++] = s_tr_mat_fallback_flags;
+            continue;
+        }
+        pbr_material_t *mat = MAT_Find(path, IT_WALL, IF_NONE);
+        if (!mat) {
+            if (!(warn_once & (1u << i))) {
+                warn_once |= (1u << i);
+                Com_WPrintf("[TERRAIN] terrain.materials[%d]: \"%s\" not found; using stock fallback\n", i, path);
+            }
+            s_tr_mat_chan[s_tr_mat_chan_count++] = s_tr_mat_fallback_flags;
+        } else {
+            s_tr_mat_chan[s_tr_mat_chan_count++] = mat->flags;
+        }
+    }
+}
+
+/* Dominant splat channel 0..3 at heightfield quad corner (ix0, iy0). Requires cpu_splat RGBA8-style layout. */
+static int terrain_splat_dominant_channel(const jungle_document_t *doc, int hf_w, int hf_h, int ix0, int iy0)
+{
+    if (!doc || !doc->cpu_splat || doc->cpu_splat_w <= 0 || doc->cpu_splat_h <= 0)
+        return 0;
+
+    const int sw = doc->cpu_splat_w;
+    const int sh = doc->cpu_splat_h;
+    const int comp = doc->cpu_splat_comp;
+    if (comp <= 0 || comp > 4)
+        return 0;
+
+    float u = 0.f, v = 0.f;
+    if (hf_w > 1)
+        u = ((float)ix0 + 0.5f) / (float)(hf_w - 1);
+    if (hf_h > 1)
+        v = ((float)iy0 + 0.5f) / (float)(hf_h - 1);
+    u = Q_clipf(u, 0.f, 1.f);
+    v = Q_clipf(v, 0.f, 1.f);
+
+    const int smax_x = sw > 1 ? sw - 1 : 0;
+    const int smax_y = sh > 1 ? sh - 1 : 0;
+    const float fx = u * (float)smax_x;
+    const float fy = v * (float)smax_y;
+    int px = (int)floorf(fx + 0.5f);
+    int py = (int)floorf(fy + 0.5f);
+    if (px < 0)
+        px = 0;
+    if (py < 0)
+        py = 0;
+    if (px >= sw)
+        px = sw - 1;
+    if (py >= sh)
+        py = sh - 1;
+
+    const uint8_t *base = doc->cpu_splat + ((size_t)py * (size_t)sw + (size_t)px) * (size_t)comp;
+
+    float wts[4] = { 0.f, 0.f, 0.f, 0.f };
+    const int nchan = comp < 4 ? comp : 4;
+    for (int c = 0; c < nchan; c++)
+        wts[c] = (float)base[c] * (1.f / 255.f);
+
+    if (comp == 1)
+        return 0;
+
+    int best = 0;
+    float bm = wts[0];
+    for (int c = 1; c < nchan; c++) {
+        if (wts[c] > bm) {
+            bm = wts[c];
+            best = c;
+        }
+    }
+    return best;
+}
+
 static void terrain_vertex_normal(const terrain_heightfield_cpu_t *hf, float wx, float wy, vec3_t out_n)
 {
     if (TerrainHeightmap_SampleNormal(hf, wx, wy, out_n))
@@ -316,7 +432,8 @@ static void terrain_vertex_normal(const terrain_heightfield_cpu_t *hf, float wx,
 }
 
 static void terrain_fill_chunk_primitives(const terrain_heightfield_cpu_t *hf, const terrain_chunk_t *c,
-                                          VboPrimitive *dst_base, int prim_base, uint32_t material_id, float uv_scale)
+                                          const jungle_document_t *doc, VboPrimitive *dst_base, int prim_base,
+                                          float uv_scale)
 {
     const int nx = c->sample_x1_ex - c->sample_x0;
     const int ny = c->sample_y1_ex - c->sample_y0;
@@ -331,6 +448,18 @@ static void terrain_fill_chunk_primitives(const terrain_heightfield_cpu_t *hf, c
             const int iy0 = c->sample_y0 + ly;
             const int ix1 = ix0 + 1;
             const int iy1 = iy0 + 1;
+
+            uint32_t mid = s_tr_mat_fallback_flags;
+            if (s_tr_mat_chan_count > 0) {
+                int dom = 0;
+                if (doc && doc->cpu_splat && doc->cpu_splat_bytes > 0)
+                    dom = terrain_splat_dominant_channel(doc, hf->width, hf->height, ix0, iy0);
+                if (dom < 0)
+                    dom = 0;
+                if (dom >= s_tr_mat_chan_count)
+                    dom = 0;
+                mid = s_tr_mat_chan[dom];
+            }
 
             float z00 = 0.f, z10 = 0.f, z01 = 0.f, z11 = 0.f;
             if (!TerrainHeightmap_SampleTexel(hf, ix0, iy0, &z00))
@@ -370,7 +499,7 @@ static void terrain_fill_chunk_primitives(const terrain_heightfield_cpu_t *hf, c
                 VectorCopy(v00, dst->pos0);
                 VectorCopy(v10, dst->pos1);
                 VectorCopy(v11, dst->pos2);
-                dst->material_id = material_id;
+                dst->material_id = mid;
                 dst->cluster = -1;
                 dst->shell = 0;
                 dst->instance = 0;
@@ -397,7 +526,7 @@ static void terrain_fill_chunk_primitives(const terrain_heightfield_cpu_t *hf, c
                 VectorCopy(v00, dst->pos0);
                 VectorCopy(v11, dst->pos1);
                 VectorCopy(v01, dst->pos2);
-                dst->material_id = material_id;
+                dst->material_id = mid;
                 dst->cluster = -1;
                 dst->shell = 0;
                 dst->instance = 0;
@@ -422,6 +551,10 @@ static void terrain_fill_chunk_primitives(const terrain_heightfield_cpu_t *hf, c
 
 static VkResult terrain_upload_positions_and_blas(void)
 {
+    unsigned dbg_t0 = 0;
+    if (terrain_debug && terrain_debug->integer)
+        dbg_t0 = Sys_Milliseconds();
+
     terrain_gpu_free_all();
 
     if (!terrain_enable || !terrain_enable->integer)
@@ -461,7 +594,8 @@ static VkResult terrain_upload_positions_and_blas(void)
         return VK_SUCCESS;
     }
 
-    const uint32_t mat_flags = terrain_flat_material_flags();
+    terrain_resolve_material_palette(TerrainJungle_GetLoaded());
+
     const float uv_scale = (terrain_uv_scale && terrain_uv_scale->value > 0.f) ? terrain_uv_scale->value : (1.f / 128.f);
 
     const int water_prim_count = TerrainWater_ShouldBuildPlaneGpu() ? 2 : 0;
@@ -560,7 +694,7 @@ static VkResult terrain_upload_positions_and_blas(void)
         if (nt <= 0)
             continue;
         terrain_fill_chunk_positions(&hf, &chunks[i], staging_positions, prim_write);
-        terrain_fill_chunk_primitives(&hf, &chunks[i], staging_prims, prim_write, mat_flags, uv_scale);
+        terrain_fill_chunk_primitives(&hf, &chunks[i], TerrainJungle_GetLoaded(), staging_prims, prim_write, uv_scale);
         prim_write += nt;
     }
     if (water_prim_count > 0)
@@ -631,7 +765,37 @@ static VkResult terrain_upload_positions_and_blas(void)
     s_terrain_prim_bytes = (VkDeviceSize)prim_sz;
     s_terrain_prim_count = total_all_prims;
     s_chunks_with_gpu_positions = chunks_with_tris;
+
+    if (terrain_debug && terrain_debug->integer) {
+        Com_Printf("[TERRAIN] terrain_upload_positions_and_blas done: %u ms chunks_w_tris=%d prims=%d water_prims=%d blas_chunks=%d\n",
+                   Sys_Milliseconds() - dbg_t0, chunks_with_tris, total_all_prims, water_prim_count, s_chunks_with_blas);
+    }
+
     return VK_SUCCESS;
+}
+
+void Terrain_RunDeferredGpuUploadIfAny(void)
+{
+    if (!s_defer_terrain_gpu_upload)
+        return;
+    if (!s_terrain_vk_ready || !terrain_enable || !terrain_enable->integer || !Terrain_IsLoaded())
+        return;
+
+    unsigned t0 = 0;
+    if (terrain_debug && terrain_debug->integer)
+        t0 = Sys_Milliseconds();
+
+    s_defer_terrain_gpu_upload = false;
+
+    VkResult r = terrain_upload_positions_and_blas();
+
+    if (terrain_debug && terrain_debug->integer) {
+        Com_Printf("[TERRAIN] Terrain_RunDeferredGpuUploadIfAny: terrain_upload total wall %u ms result=%d\n",
+                   Sys_Milliseconds() - t0, (int)r);
+    }
+
+    if (r != VK_SUCCESS)
+        Com_EPrintf("[TERRAIN] deferred terrain GPU upload failed (%d)\n", (int)r);
 }
 
 VkResult Terrain_InitVk(void)
@@ -659,6 +823,10 @@ void Terrain_OnMapUnload_Vk(void)
 
 void Terrain_OnMapLoaded_Vk(const char *mapname)
 {
+    unsigned t0 = 0;
+    if (terrain_debug && terrain_debug->integer)
+        t0 = Sys_Milliseconds();
+
     if (!s_terrain_vk_ready)
         return;
     if (!terrain_enable || !terrain_enable->integer)
@@ -670,9 +838,24 @@ void Terrain_OnMapLoaded_Vk(const char *mapname)
 
     TerrainWater_OnMapLoadedVk(mapname);
 
-    VkResult r = terrain_upload_positions_and_blas();
-    if (r != VK_SUCCESS)
-        Com_EPrintf("[TERRAIN] Terrain_OnMapLoaded_Vk: GPU upload/BLAS failed (%d)\n", (int)r);
+    /*
+     * Default: defer GPU upload + BLAS build to Terrain_PreFrameRenderHook() so R_BeginRegistration
+     * does not block on vkDeviceWaitIdle (fixes long hitches with +map / CLI startup).
+     * Set terrain_build_blas_on_load 1 for legacy synchronous upload during map registration.
+     */
+    if (terrain_build_blas_on_load && terrain_build_blas_on_load->integer) {
+        s_defer_terrain_gpu_upload = false;
+        VkResult r = terrain_upload_positions_and_blas();
+        if (r != VK_SUCCESS)
+            Com_EPrintf("[TERRAIN] Terrain_OnMapLoaded_Vk: GPU upload/BLAS failed (%d)\n", (int)r);
+    } else {
+        s_defer_terrain_gpu_upload = true;
+        if (terrain_debug && terrain_debug->integer)
+            Com_Printf("[TERRAIN] Terrain_OnMapLoaded_Vk: GPU upload deferred (terrain_build_blas_on_load 0)\n");
+    }
+
+    if (terrain_debug && terrain_debug->integer)
+        Com_Printf("[TERRAIN] Terrain_OnMapLoaded_Vk hook wall: %u ms\n", Sys_Milliseconds() - t0);
 }
 
 void Terrain_BuildBLAS(void)
@@ -746,8 +929,91 @@ void TerrainRender_DebugAppendInfo(void)
     Com_Printf("[TERRAIN] terrain GPU bytes (primitive buffer): %llu\n", (unsigned long long)s_terrain_prim_bytes);
     Com_Printf("[TERRAIN] terrain primitive count: %d\n", s_terrain_prim_count);
     Com_Printf("[TERRAIN] TLAS terrain chunk instances submitted (last frame): %d\n", s_last_terrain_tlas_instances);
-    Com_Printf("[TERRAIN] material mode: flat default (stock floor *.wal from baseq2.mat)\n");
+    Com_Printf("[TERRAIN] material mode: CPU dominant channel → per-triangle material_id (Phase 8B)\n");
+    Com_Printf("[TERRAIN] material inline (jungle): %d  resolved channels: %d  splat CPU: %s\n", s_tr_mat_inline_count,
+               s_tr_mat_chan_count,
+               (TerrainJungle_GetLoaded() && TerrainJungle_GetLoaded()->cpu_splat && TerrainJungle_GetLoaded()->cpu_splat_bytes > 0)
+                   ? "yes"
+                   : "no");
+    if (TerrainJungle_GetLoaded() && TerrainJungle_GetLoaded()->cpu_splat && TerrainJungle_GetLoaded()->cpu_splat_bytes > 0) {
+        const jungle_document_t *jd = TerrainJungle_GetLoaded();
+        Com_Printf("[TERRAIN] splatmap CPU: %dx%d comp=%d\n", jd->cpu_splat_w, jd->cpu_splat_h, jd->cpu_splat_comp);
+    }
+    Com_Printf("[TERRAIN] shader splat blending: deferred (not Phase 8B)\n");
     TerrainWater_DebugAppendInfo();
+}
+
+void TerrainRender_DebugProbeSplatWorld(float world_x, float world_y)
+{
+    const jungle_document_t *d = TerrainJungle_GetLoaded();
+    if (!d) {
+        Com_Printf("[TERRAIN] probe splat: (no jungle document)\n");
+        return;
+    }
+    if (!d->cpu_splat || d->cpu_splat_bytes <= 0) {
+        Com_Printf("[TERRAIN] probe splat: (no CPU splat — materials use channel 0 only)\n");
+        return;
+    }
+
+    terrain_heightfield_cpu_t hf;
+    if (!Terrain_Internal_GetActiveHeightfield(&hf)) {
+        Com_Printf("[TERRAIN] probe splat: (no active heightfield)\n");
+        return;
+    }
+
+    const float ox = hf.origin[0];
+    const float oy = hf.origin[1];
+    const float sxy = hf.scale_xy;
+    if (!(sxy > 0.f)) {
+        Com_Printf("[TERRAIN] probe splat: invalid scale_xy\n");
+        return;
+    }
+
+    const float maxx = (float)(hf.width - 1);
+    const float maxy = (float)(hf.height - 1);
+    const float gx = (world_x - ox) / sxy;
+    const float gy = (world_y - oy) / sxy;
+    if (gx < 0.f || gy < 0.f || gx > maxx || gy > maxy) {
+        Com_Printf("[TERRAIN] probe splat: (%.1f %.1f) outside heightfield XY bounds\n", world_x, world_y);
+        return;
+    }
+
+    const int ix = (int)floorf(gx);
+    const int iy = (int)floorf(gy);
+    const int dom = terrain_splat_dominant_channel(d, hf.width, hf.height, ix, iy);
+
+    const uint8_t *base = nullptr;
+    float w[4] = { 0.f, 0.f, 0.f, 0.f };
+    if (d->cpu_splat && d->cpu_splat_w > 0 && d->cpu_splat_h > 0 && d->cpu_splat_comp > 0) {
+        const int sw = d->cpu_splat_w;
+        const int sh = d->cpu_splat_h;
+        const int comp = d->cpu_splat_comp;
+        float u = hf.width > 1 ? (((float)ix + 0.5f) / (float)(hf.width - 1)) : 0.f;
+        float v = hf.height > 1 ? (((float)iy + 0.5f) / (float)(hf.height - 1)) : 0.f;
+        u = Q_clipf(u, 0.f, 1.f);
+        v = Q_clipf(v, 0.f, 1.f);
+        const int smax_x = sw > 1 ? sw - 1 : 0;
+        const int smax_y = sh > 1 ? sh - 1 : 0;
+        const float fx = u * (float)smax_x;
+        const float fy = v * (float)smax_y;
+        int px = (int)floorf(fx + 0.5f);
+        int py = (int)floorf(fy + 0.5f);
+        if (px < 0)
+            px = 0;
+        if (py < 0)
+            py = 0;
+        if (px >= sw)
+            px = sw - 1;
+        if (py >= sh)
+            py = sh - 1;
+        base = d->cpu_splat + ((size_t)py * (size_t)sw + (size_t)px) * (size_t)comp;
+        const int nc = comp < 4 ? comp : 4;
+        for (int c = 0; c < nc; c++)
+            w[c] = (float)base[c] * (1.f / 255.f);
+    }
+
+    Com_Printf("[TERRAIN] probe splat: ix=%d iy=%d dominant_chan=%d weights %.3f %.3f %.3f %.3f (resolved_slots=%d)\n",
+               ix, iy, dom, w[0], w[1], w[2], w[3], s_tr_mat_chan_count);
 }
 
 } /* extern "C" */
