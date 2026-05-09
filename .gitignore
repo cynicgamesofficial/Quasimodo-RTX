@@ -50,8 +50,7 @@ sl.reflex.json
 q2config.cfg
 save
 */docs
-!.cursor/docs/
-!.cursor/docs/**
+.cursor/docs/
 baseq2/**/*.txt
 !baseq2/*.txt
 !baseq2/maps/sky/*.txt
