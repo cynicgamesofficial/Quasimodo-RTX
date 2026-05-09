@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 #include "shared/shared.h"
+#include <vulkan/vulkan.h>
 
 /* Fallback CVars (registered when Terrain_Init runs). */
 extern cvar_t *terrain_enable;
@@ -26,6 +27,14 @@ extern cvar_t *terrain_show_seams;
 extern cvar_t *terrain_water_debug;
 extern cvar_t *terrain_water_level;
 extern cvar_t *terrain_lod_bias;
+extern cvar_t *terrain_rtx_instance;
+
+VkResult Terrain_InitVk(void);
+VkResult Terrain_DestroyVk(void);
+void Terrain_OnMapLoaded_Vk(const char *mapname);
+void Terrain_OnMapUnload_Vk(void);
+void Terrain_BuildBLAS(void);
+void Terrain_BuildSeamBLAS(void);
 
 void Terrain_Init(void);
 void Terrain_Shutdown(void);

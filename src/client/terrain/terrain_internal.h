@@ -140,6 +140,8 @@ void TerrainDebug_PrintInfo(void);
 void TerrainDebug_DumpChunks(void);
 void TerrainDebug_ProbeExtra(float world_x, float world_y);
 
+void TerrainRender_DebugAppendInfo(void);
+
 int TerrainSeam_GetCpuMeshCount(void);
 
 #endif /* QUASIMODO_TERRAIN */

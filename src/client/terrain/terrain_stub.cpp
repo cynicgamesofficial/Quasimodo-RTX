@@ -4,6 +4,29 @@
 
 #include "terrain.h"
 
+#include <vulkan/vulkan.h>
+
+VkResult Terrain_InitVk(void)
+{
+    return VK_SUCCESS;
+}
+
+VkResult Terrain_DestroyVk(void)
+{
+    return VK_SUCCESS;
+}
+
+void Terrain_OnMapLoaded_Vk(const char *mapname)
+{
+    (void)mapname;
+}
+
+void Terrain_OnMapUnload_Vk(void) {}
+
+void Terrain_BuildBLAS(void) {}
+
+void Terrain_BuildSeamBLAS(void) {}
+
 void Terrain_Init(void) {}
 void Terrain_Shutdown(void) {}
 
@@ -53,3 +76,5 @@ cvar_t *terrain_show_seams;
 cvar_t *terrain_water_debug;
 cvar_t *terrain_water_level;
 cvar_t *terrain_lod_bias;
+/* terrain_rtx_instance: not registered when QUASIMODO_TERRAIN is off; Terrain_InstanceBLAS no-ops */
+cvar_t *terrain_rtx_instance;

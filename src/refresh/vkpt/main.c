@@ -46,6 +46,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #endif
 #include "../../client/client.h"
 #include "../../client/ui/ui.h"
+#include "../../client/terrain/terrain.h"
 
 #include "shader/vertex_buffer.h"
 
@@ -278,6 +279,7 @@ VkptInit_t vkpt_initialization[] = {
 	{ "godrays",    vkpt_initialize_god_rays,           vkpt_destroy_god_rays,              VKPT_INIT_DEFAULT,             0 },
 	{ "godrays|",   vkpt_god_rays_create_pipelines,     vkpt_god_rays_destroy_pipelines,    VKPT_INIT_RELOAD_SHADER,       0 },
 	{ "godraysI",   vkpt_god_rays_update_images,        vkpt_god_rays_noop,                 VKPT_INIT_SWAPCHAIN_RECREATE,  0 },
+	{ "terrain",    Terrain_InitVk,                     Terrain_DestroyVk,                VKPT_INIT_DEFAULT,             0 },
 };
 
 // Values returned by pick_surface_format_*
@@ -5262,6 +5264,7 @@ R_BeginRegistration_RTX(const char *name)
 	Com_AddConfigFile(va("maps/%s.cfg", name), 0);
 
 	if(vkpt_refdef.bsp_mesh_world_loaded) {
+		Terrain_OnMapUnload_Vk();
 		vkpt_vertex_buffer_cleanup_bsp_mesh(&vkpt_refdef.bsp_mesh_world);
 		bsp_mesh_destroy(&vkpt_refdef.bsp_mesh_world);
 		vkpt_refdef.bsp_mesh_world_loaded = 0;
@@ -5290,6 +5293,7 @@ R_BeginRegistration_RTX(const char *name)
 	vkpt_light_buffers_create(&vkpt_refdef.bsp_mesh_world);
 	_VK(vkpt_vertex_buffer_upload_bsp_mesh(&vkpt_refdef.bsp_mesh_world));
 	vkpt_refdef.bsp_mesh_world_loaded = 1;
+	Terrain_OnMapLoaded_Vk(name);
 	bsp = NULL;
 	world_anim_frame = 0;
 

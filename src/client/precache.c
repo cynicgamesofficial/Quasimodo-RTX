@@ -22,6 +22,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 //
 
 #include "client.h"
+#include "terrain/terrain.h"
 
 /*
 ================
@@ -350,6 +351,16 @@ void CL_PrepRefresh(void)
         return;
     if (!cl.mapname[0])
         return;     // no map loaded
+
+    /*
+     * CPU .jungle (optional) must load before renderer registration so RTX can upload
+     * terrain GPU buffers after BSP mesh upload (Terrain_OnMapLoaded_Vk).
+     */
+    if (terrain_enable && terrain_enable->integer) {
+        Terrain_LoadJungle(cl.mapname);
+    } else {
+        Terrain_Unload();
+    }
 
     // register models, pics, and skins
     R_BeginRegistration(cl.mapname);

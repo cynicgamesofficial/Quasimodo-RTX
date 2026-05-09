@@ -110,6 +110,7 @@ cvar_t *terrain_show_seams;
 cvar_t *terrain_water_debug;
 cvar_t *terrain_water_level;
 cvar_t *terrain_lod_bias;
+cvar_t *terrain_rtx_instance;
 
 static bool Terrain_IsSubsystemEnabled(void)
 {
@@ -371,6 +372,7 @@ static void Terrain_RegisterVarsAndCommands(void)
     terrain_water_debug = Cvar_Get("terrain_water_debug", "0", 0);
     terrain_water_level = Cvar_Get("terrain_water_level", "0", CVAR_ARCHIVE);
     terrain_lod_bias = Cvar_Get("terrain_lod_bias", "0", CVAR_ARCHIVE);
+    terrain_rtx_instance = Cvar_Get("terrain_rtx_instance", "0", 0);
 
     Cmd_AddCommand("terrain_load", Terrain_Cmd_Load_f);
     Cmd_AddCommand("terrain_unload", Terrain_Cmd_Unload_f);
@@ -424,21 +426,25 @@ bool Terrain_LoadJungle(const char *mapname)
     char path[MAX_OSPATH];
     Terrain_BuildMapsJunglePath(mapname, path, sizeof path);
 
+    /*
+     * Always detach prior map CPU terrain before attempting this map's optional .jungle,
+     * including when the file is absent (BSP-only maps must not keep another map's jungle).
+     */
+    TerrainJungle_UnloadAll();
+#if QUASIMODO_TERRAIN
+    TerrainChunks_Free();
+#endif
+    terrain_loaded = false;
+    Terrain_ClearLastPath();
+
     if (!FS_FileExists(path)) {
         Com_DPrintf("[TERRAIN] missing optional %s\n", path);
         return false;
     }
 
     char err[512];
-    TerrainJungle_UnloadAll();
-#if QUASIMODO_TERRAIN
-    TerrainChunks_Free();
-#endif
-    terrain_loaded = false;
-
     if (!TerrainJungle_LoadFromVFS(path, err, sizeof err)) {
         Com_EPrintf("[TERRAIN] failed parsing %s: %s\n", path, err);
-        Terrain_ClearLastPath();
         return false;
     }
 
@@ -491,6 +497,12 @@ void Terrain_InstanceBLAS(void)
     if (!terrain_registered || !Terrain_IsSubsystemEnabled()) {
         return;
     }
+#if QUASIMODO_TERRAIN
+    if (!terrain_rtx_instance || !terrain_rtx_instance->integer) {
+        return;
+    }
+    /* Phase 5B: TLAS terrain instancing + primitive buffer / shader contract */
+#endif
 }
 
 void Terrain_TraceLine(trace_t *trace,

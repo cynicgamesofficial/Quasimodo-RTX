@@ -133,6 +133,8 @@ void TerrainDebug_PrintInfo(void)
 
     Com_Printf("[TERRAIN] debug show state (synced): chunks=%d lod=%d seams=%d\n", s_dbg_show_chunks,
                s_dbg_show_lod, s_dbg_show_seams);
+
+    TerrainRender_DebugAppendInfo();
 }
 
 void TerrainDebug_DumpChunks(void)
