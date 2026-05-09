@@ -73,7 +73,9 @@ void TerrainDebug_PrintInfo(void)
             && Terrain_IsLoaded();
         Com_Printf("[TERRAIN] collision active: %s\n", col_active ? "yes" : "no");
     }
-    Com_Printf("[TERRAIN] collision mode: heightfield segment (ray), no swept AABB; see Phase 7B\n");
+    Com_Printf("[TERRAIN] collision mode: heightfield crossing + footprint ground-support (eps %.1f/%.1f); "
+               "no full swept OBB / wall hull\n",
+               2.0f, 4.0f);
     Com_Printf("[TERRAIN] q2rtxded terrain collision: deferred (dedicated server has no terrain .jungle/CPU data in this build)\n");
     Com_Printf("[TERRAIN] point contents: deferred (no terrain solid/underfoot query in Phase 7B)\n");
     Com_Printf("[TERRAIN] seam collision: deferred (no .patch on jungletest; no seam raycast API)\n");
@@ -92,7 +94,8 @@ void TerrainDebug_PrintInfo(void)
         Com_Printf("[TERRAIN] origin: %.3f %.3f %.3f\n", d->terrain_origin[0], d->terrain_origin[1],
                    d->terrain_origin[2]);
         Com_Printf("[TERRAIN] scale_xy: %.6f scale_z: %.6f\n", d->terrain_scale_xy, d->terrain_scale_z);
-        Com_Printf("[TERRAIN] chunk_size (jungle): %d\n", d->terrain_chunk_size);
+        Com_Printf("[TERRAIN] chunk_size (jungle): %d cells/quads per axis; boundary vertices overlap between chunks\n",
+                   d->terrain_chunk_size);
         Com_Printf("[TERRAIN] lod_count (jungle): %d (effective cap %d)\n", d->terrain_lod_count,
                    terrain_effective_lod_cap(d));
         Com_Printf("[TERRAIN] LOD reference: heightfield XY center (Phase 4); camera/player-driven LOD deferred.\n");
@@ -103,7 +106,7 @@ void TerrainDebug_PrintInfo(void)
     int gw = 0, gh = 0;
     TerrainChunks_GetGridDims(&gw, &gh);
     const int total = TerrainChunks_GetNumChunks();
-    Com_Printf("[TERRAIN] chunk grid: %d x %d cells, total chunks: %d\n", gw, gh, total);
+    Com_Printf("[TERRAIN] chunk grid: %d x %d chunk slots, total chunks: %d\n", gw, gh, total);
 
     const terrain_chunk_t *arr = TerrainChunks_GetArray();
     int vis = 0;
@@ -156,11 +159,18 @@ void TerrainDebug_DumpChunks(void)
     Com_Printf("[TERRAIN] --- terrain_dump_chunks (%d) ---\n", n);
     for (int i = 0; i < n; i++) {
         const terrain_chunk_t *c = &arr[i];
-        Com_Printf(
-            "[TERRAIN] chunk[%d] grid=(%d,%d) samples=[%d,%d)-[%d,%d) visible=%d lod=%d tgt=%d dirty=%d "
-            "seam_hint=%d\n",
-            i, c->grid_x, c->grid_y, c->sample_x0, c->sample_x1_ex, c->sample_y0, c->sample_y1_ex,
-            c->visible ? 1 : 0, c->lod_current, c->lod_target, c->dirty ? 1 : 0, c->dbg_seam_hint ? 1 : 0);
+        {
+            const int nvx = c->sample_x1_ex - c->sample_x0;
+            const int nvy = c->sample_y1_ex - c->sample_y0;
+            const int nqx = nvx > 1 ? nvx - 1 : 0;
+            const int nqy = nvy > 1 ? nvy - 1 : 0;
+            Com_Printf(
+                "[TERRAIN] chunk[%d] grid=(%d,%d) samples x[%d,%d) y[%d,%d) verts nx=%d ny=%d quads=%dx%d tris=%d "
+                "visible=%d lod=%d tgt=%d dirty=%d seam_hint=%d\n",
+                i, c->grid_x, c->grid_y, c->sample_x0, c->sample_x1_ex, c->sample_y0, c->sample_y1_ex, nvx, nvy, nqx, nqy,
+                2 * nqx * nqy, c->visible ? 1 : 0, c->lod_current, c->lod_target, c->dirty ? 1 : 0,
+                c->dbg_seam_hint ? 1 : 0);
+        }
         Com_Printf("[TERRAIN]   AABB mins %.3f %.3f %.3f maxs %.3f %.3f %.3f z_min/max %.3f %.3f\n",
                    c->bounds_mins[0], c->bounds_mins[1], c->bounds_mins[2], c->bounds_maxs[0], c->bounds_maxs[1],
                    c->bounds_maxs[2], c->z_min, c->z_max);

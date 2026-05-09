@@ -59,8 +59,8 @@ void Terrain_TraceLine(trace_t *trace,
                        int brushmask);
 
 /*
- * Phase 7B — after CM_BoxTrace against world BSP, optionally merge a terrain heightfield segment hit.
- * No-op when terrain is unavailable or Terrain_Internal_TraceHeightfieldSegment misses (see terrain_collision.cpp).
+ * Phase 7B — after CM_BoxTrace against world BSP, optionally merge a terrain heightfield hit.
+ * Uses hull/bottom-footprint trace when mins/maxs imply a box (see terrain_collision.cpp).
  * Requires contentmask & CONTENTS_SOLID for terrain solid hits.
  */
 void Terrain_MergeWorldTrace(trace_t *dst,
@@ -101,11 +101,18 @@ bool Terrain_SampleNormal(float world_x, float world_y, vec3_t out_normal);
 
 /*
  * Internal-only heightfield ray vs bilinear surface (Phase 3).
- * Swept AABB vs terrain is not implemented; trace acts as a zero-thickness segment.
+ * Ray cast uses ray_start->ray_end; trace endpos uses origin_start->origin_end (player origin sweep).
  * On miss or when terrain is disabled / unavailable, returns false after initializing *out_tr to a clean miss
- * (fraction 1, cleared flags). On hit, fills trace_t with the nearest intersection along the segment.
+ * (fraction 1, cleared flags).
  */
-bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t end, trace_t *out_tr);
+bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t ray_start, const vec3_t ray_end,
+                                              const vec3_t origin_start, const vec3_t origin_end, trace_t *out_tr);
+
+/*
+ * Hull-bottom crossing traces plus footprint ground-support when rays miss (near-horizontal moves).
+ */
+bool Terrain_Internal_TraceHeightfieldHull(const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs,
+                                           trace_t *out_tr);
 
 void TerrainSeam_FreeAll(void);
 bool TerrainSeam_LoadFromPatchPaths(const char *const *paths, int count);

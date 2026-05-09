@@ -1,8 +1,13 @@
 /*
- * Quasimodo RTX — internal terrain heightfield trace helper (Phase 3).
+ * Quasimodo RTX — internal terrain heightfield trace helper (Phase 3 / Phase 7 stable floor).
  *
- * Segment vs bilinear patch mesh (per-cell two triangles). Swept player bounds are not handled here.
- * trace_t is always cleared to a miss first; disabled/unloaded paths return false without a hit.
+ * PMove sweeps an OBB; heightfield is triangles. We combine:
+ *   (1) ray/triangle crossing along hull-bottom segments with correct *origin* endpos (lerp),
+ *   (2) footprint ground-support when the sweep is nearly parallel to the surface so rays miss
+ *       but the hull bottom at end_xy still sits within epsilon of the surface under the feet
+ *       (fixes horizontal steps losing ground + CL_Trace needing fraction<1 for world ent).
+ *
+ * Not a full swept OBB vs heightfield. No vertical wall hull clipping.
  */
 
 #include "terrain.h"
@@ -16,6 +21,7 @@
 extern "C" {
 #include "common/common.h"
 #include "common/cvar.h"
+#include "system/system.h"
 #if USE_CLIENT
 #include "common/bsp.h"
 #endif
@@ -23,6 +29,7 @@ extern "C" {
 
 extern cvar_t *terrain_enable;
 extern cvar_t *terrain_collision;
+extern cvar_t *terrain_debug;
 
 #if USE_CLIENT
 /*
@@ -42,6 +49,23 @@ static void Terrain_Internal_InitFootstepSurface(void)
     terrain_collision_footstep_texinfo_ready = true;
 }
 #endif /* USE_CLIENT */
+
+/* Feet may float this far above the highest terrain sample under the hull (slopes / numeric drift). */
+static const float TERRAIN_SUPPORT_EPS_Z = 2.0f;
+/* Feet may interpenetrate this far below the lowest terrain sample before we refuse support. */
+static const float TERRAIN_PENETRATE_EPS_Z = 4.0f;
+/* Synthetic hits must use fraction strictly < 1 so CL_Trace assigns world ent for PM_CategorizePosition. */
+static const float TERRAIN_SUPPORT_SYNTH_FRAC = 1.0f - 1.0f / 8192.0f;
+
+static void trace_clear_miss(trace_t *tr)
+{
+    if (!tr)
+        return;
+    memset(tr, 0, sizeof(*tr));
+    tr->fraction = 1.f;
+    tr->allsolid = qfalse;
+    tr->startsolid = qfalse;
+}
 
 static bool ray_triangle_mt(const vec3_t orig, const vec3_t dir_u,
                             float seg_len,
@@ -91,17 +115,11 @@ static bool ray_triangle_mt(const vec3_t orig, const vec3_t dir_u,
     return true;
 }
 
-static void trace_clear_miss(trace_t *tr)
-{
-    if (!tr)
-        return;
-    memset(tr, 0, sizeof(*tr));
-    tr->fraction = 1.f;
-    tr->allsolid = qfalse;
-    tr->startsolid = qfalse;
-}
-
-bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t end, trace_t *out_tr)
+/*
+ * Ray vs triangles along (ray_start -> ray_end); result trace uses player *origin* sweep (origin_start -> origin_end).
+ */
+bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t ray_start, const vec3_t ray_end,
+                                              const vec3_t origin_start, const vec3_t origin_end, trace_t *out_tr)
 {
     if (!out_tr) {
         return false;
@@ -118,7 +136,7 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
         return false;
 
     vec3_t dir;
-    VectorSubtract(end, start, dir);
+    VectorSubtract(ray_end, ray_start, dir);
     const float seg_len = VectorLength(dir);
     if (seg_len < 1e-8f)
         return false;
@@ -170,14 +188,14 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
             float t = 0.f;
             vec3_t n;
 
-            if (ray_triangle_mt(start, dir_u, seg_len, p00, p10, p11, &t, n)) {
+            if (ray_triangle_mt(ray_start, dir_u, seg_len, p00, p10, p11, &t, n)) {
                 if (t < best_t) {
                     best_t = t;
                     VectorCopy(n, best_n);
                     hit = true;
                 }
             }
-            if (ray_triangle_mt(start, dir_u, seg_len, p00, p11, p01, &t, n)) {
+            if (ray_triangle_mt(ray_start, dir_u, seg_len, p00, p11, p01, &t, n)) {
                 if (t < best_t) {
                     best_t = t;
                     VectorCopy(n, best_n);
@@ -194,11 +212,14 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
     if (frac < 0.f || frac > 1.f)
         return false;
 
-    vec3_t hitpos;
-    VectorMA(start, best_t, dir_u, hitpos);
-
+    vec3_t o_delta;
+    VectorSubtract(origin_end, origin_start, o_delta);
     out_tr->fraction = frac;
-    VectorCopy(hitpos, out_tr->endpos);
+    /* trace.endpos = swept player origin at impact (matches CM_BoxTrace), not triangle hit point */
+    VectorMA(origin_start, frac, o_delta, out_tr->endpos);
+
+    vec3_t hitpos;
+    VectorMA(ray_start, best_t, dir_u, hitpos);
     VectorCopy(best_n, out_tr->plane.normal);
     out_tr->plane.dist = DotProduct(hitpos, best_n);
     out_tr->plane.type = PLANE_NON_AXIAL;
@@ -215,12 +236,189 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
     return true;
 }
 
-extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const vec3_t end, const vec3_t mins,
-                                        const vec3_t maxs, int contentmask, struct edict_s *world_ent)
+static void terrain_hull_footprint_xy_offs(const vec3_t mins, const vec3_t maxs, vec2_t out5[5])
 {
-    (void)mins;
-    (void)maxs;
+    out5[0][0] = 0.5f * (mins[0] + maxs[0]);
+    out5[0][1] = 0.5f * (mins[1] + maxs[1]);
+    out5[1][0] = mins[0];
+    out5[1][1] = mins[1];
+    out5[2][0] = maxs[0];
+    out5[2][1] = mins[1];
+    out5[3][0] = mins[0];
+    out5[3][1] = maxs[1];
+    out5[4][0] = maxs[0];
+    out5[4][1] = maxs[1];
+}
 
+/* True if hull bottom Z vs min/max terrain Z under the footprint says we're standing/supported at origin_end. */
+static bool terrain_footprint_supported_at_end(const terrain_heightfield_cpu_t *hf, const vec3_t origin_end,
+                                               const vec3_t mins, const vec3_t maxs)
+{
+    vec2_t offs[5];
+    terrain_hull_footprint_xy_offs(mins, maxs, offs);
+
+    float tmin = FLT_MAX;
+    float tmax = -FLT_MAX;
+
+    for (int i = 0; i < 5; i++) {
+        const float wx = origin_end[0] + offs[i][0];
+        const float wy = origin_end[1] + offs[i][1];
+        float tz;
+        if (!TerrainHeightmap_SampleHeight(hf, wx, wy, &tz))
+            return false;
+        if (tz < tmin)
+            tmin = tz;
+        if (tz > tmax)
+            tmax = tz;
+    }
+
+    const float bz = origin_end[2] + mins[2];
+    /* Floating above all samples under the hull */
+    if (bz > tmax + TERRAIN_SUPPORT_EPS_Z)
+        return false;
+    /* Deep under the lowest sample (void / wrong volume) */
+    if (bz < tmin - TERRAIN_PENETRATE_EPS_Z)
+        return false;
+    return true;
+}
+
+static bool terrain_try_synthetic_floor_trace(const terrain_heightfield_cpu_t *hf,
+                                              const vec3_t origin_start, const vec3_t origin_end,
+                                              const vec3_t mins, const vec3_t maxs, trace_t *out_tr)
+{
+    if (!hf || !out_tr)
+        return false;
+
+    if (!terrain_footprint_supported_at_end(hf, origin_end, mins, maxs))
+        return false;
+
+    vec2_t offs[5];
+    terrain_hull_footprint_xy_offs(mins, maxs, offs);
+    const float wx = origin_end[0] + offs[0][0];
+    const float wy = origin_end[1] + offs[0][1];
+
+    vec3_t n;
+    if (!TerrainHeightmap_SampleNormal(hf, wx, wy, n))
+        return false;
+
+    float tz;
+    if (!TerrainHeightmap_SampleHeight(hf, wx, wy, &tz))
+        return false;
+
+    trace_clear_miss(out_tr);
+    out_tr->fraction = TERRAIN_SUPPORT_SYNTH_FRAC;
+
+    vec3_t o_delta;
+    VectorSubtract(origin_end, origin_start, o_delta);
+    VectorMA(origin_start, out_tr->fraction, o_delta, out_tr->endpos);
+
+    VectorCopy(n, out_tr->plane.normal);
+    vec3_t plane_pt = { wx, wy, tz };
+    out_tr->plane.dist = DotProduct(plane_pt, n);
+    out_tr->plane.type = PLANE_NON_AXIAL;
+    out_tr->plane.signbits = 0;
+#if USE_CLIENT
+    Terrain_Internal_InitFootstepSurface();
+    out_tr->surface = &terrain_collision_footstep_texinfo.c;
+#else
+    out_tr->surface = nullptr;
+#endif
+    out_tr->contents = CONTENTS_SOLID;
+    out_tr->ent = nullptr;
+    out_tr->startsolid = qfalse;
+    out_tr->allsolid = qfalse;
+
+    return true;
+}
+
+/*
+ * Bottom footprint: parallel segments along hull bottom + synthetic floor when rays miss (horizontal/near-tangent).
+ */
+bool Terrain_Internal_TraceHeightfieldHull(const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs,
+                                           trace_t *out_tr)
+{
+    if (!out_tr)
+        return false;
+    trace_clear_miss(out_tr);
+
+    if (!terrain_enable || !terrain_enable->integer)
+        return false;
+    if (!terrain_collision || !terrain_collision->integer)
+        return false;
+
+    terrain_heightfield_cpu_t hf;
+    if (!Terrain_Internal_GetActiveHeightfield(&hf))
+        return false;
+
+    const float dx = maxs[0] - mins[0];
+    const float dy = maxs[1] - mins[1];
+
+    /* Crossing passes */
+    trace_t best;
+    trace_clear_miss(&best);
+    best.fraction = 2.f;
+
+    if (fabsf(dx) < 1e-4f && fabsf(dy) < 1e-4f) {
+        if (!Terrain_Internal_TraceHeightfieldSegment(start, end, start, end, &best))
+            return terrain_try_synthetic_floor_trace(&hf, start, end, mins, maxs, out_tr);
+        *out_tr = best;
+        return true;
+    }
+
+    vec2_t offs[5];
+    terrain_hull_footprint_xy_offs(mins, maxs, offs);
+
+    for (int i = 0; i < 5; i++) {
+        vec3_t rs, re;
+
+        rs[0] = start[0] + offs[i][0];
+        rs[1] = start[1] + offs[i][1];
+        rs[2] = start[2] + mins[2];
+        re[0] = end[0] + offs[i][0];
+        re[1] = end[1] + offs[i][1];
+        re[2] = end[2] + mins[2];
+
+        trace_t tr;
+        if (!Terrain_Internal_TraceHeightfieldSegment(rs, re, start, end, &tr))
+            continue;
+        if (tr.fraction < best.fraction)
+            best = tr;
+    }
+
+    if (best.fraction <= 1.f) {
+        *out_tr = best;
+        return true;
+    }
+
+    return terrain_try_synthetic_floor_trace(&hf, start, end, mins, maxs, out_tr);
+}
+
+static void terrain_merge_debug_log(const char *tag, const trace_t *dst_before, float ter_frac, bool terrain_applied)
+{
+    if (!terrain_debug || !terrain_debug->integer)
+        return;
+
+    static unsigned s_reset_ms = 0;
+    static int s_budget = 0;
+
+    const unsigned t = Sys_Milliseconds();
+    if (t - s_reset_ms > 500) {
+        s_reset_ms = t;
+        s_budget = 10;
+    }
+    if (s_budget <= 0)
+        return;
+    s_budget--;
+
+    const bool probably_synth = ter_frac >= (1.0f - 0.002f);
+    Com_Printf("[TERRAIN] merge %s: bsp_frac=%.5f ter_frac=%.5f mode=%s applied=%d\n", tag,
+               dst_before ? dst_before->fraction : -1.f, ter_frac, probably_synth ? "support" : "cross",
+               terrain_applied ? 1 : 0);
+}
+
+extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const vec3_t end, const vec3_t mins,
+                                          const vec3_t maxs, int contentmask, struct edict_s *world_ent)
+{
     if (!dst)
         return;
 
@@ -228,7 +426,7 @@ extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const 
     if (!(contentmask & CONTENTS_SOLID))
         return;
 
-    /* Keep BSP stuck-in-solid behavior authoritative; do not replace with segment hits. */
+    /* Keep BSP stuck-in-solid behavior authoritative; do not replace with terrain hits. */
     if (dst->allsolid || dst->startsolid)
         return;
 
@@ -237,11 +435,18 @@ extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const 
     memset(&ter, 0, sizeof(ter));
     ter.fraction = 1.f;
 
-    if (!Terrain_Internal_TraceHeightfieldSegment(start, end, &ter))
+    if (!Terrain_Internal_TraceHeightfieldHull(start, end, mins, maxs, &ter)) {
+        terrain_merge_debug_log("miss", dst, 1.f, false);
         return;
+    }
 
     if (!(ter.fraction < dst->fraction))
+    {
+        terrain_merge_debug_log("no_replace", dst, ter.fraction, false);
         return;
+    }
+
+    terrain_merge_debug_log("win", dst, ter.fraction, true);
 
     *dst = ter;
     dst->ent = world_ent;

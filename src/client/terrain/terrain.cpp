@@ -273,8 +273,8 @@ static void Terrain_Cmd_Probe_f(void)
     Com_Printf("[TERRAIN] loaded: %s\n", terrain_loaded ? "yes" : "no");
     Com_Printf("[TERRAIN] terrain_enable: %d\n", Terrain_IsSubsystemEnabled() ? 1 : 0);
     Com_Printf("[TERRAIN] terrain_collision: %d\n", Terrain_IsCollisionEnabled() ? 1 : 0);
-    Com_Printf(
-        "[TERRAIN] collision: heightfield segment (ray) only; mins/maxs ignored; q2rtxded has no terrain merge in this build\n");
+    Com_Printf("[TERRAIN] collision: ray/triangle along hull bottom + ground-support if parallel miss; "
+               "no full OBB/wall clip; q2rtxded has no terrain merge\n");
     Com_Printf("[TERRAIN] terrain_water cvar: %d\n", terrain_water && terrain_water->integer ? 1 : 0);
 
     if (terrain_last_jungle_vfs[0])
@@ -544,7 +544,7 @@ void Terrain_TraceLine(trace_t *trace,
         return;
 
 #if QUASIMODO_TERRAIN
-    Terrain_Internal_TraceHeightfieldSegment(start, end, trace);
+    Terrain_Internal_TraceHeightfieldHull(start, end, mins, maxs, trace);
 #endif
 }
 
