@@ -119,7 +119,11 @@ static int CL_FindFootstepSurface(int entnum)
         return footstep_id;
     }
 
-    if (tr.surface != &(nulltexinfo.c)) {
+    /*
+     * Null surface: treat as default footsteps (terrain trace, custom traces). Never dereference.
+     * Non-null but not nulltexinfo: resolve step_id from mtexinfo (BSP convention: surface -> embedded in mtexinfo).
+     */
+    if (tr.surface && tr.surface != &(nulltexinfo.c)) {
         // copy over the surfaces' step ID
         footstep_id = ((mtexinfo_t *)tr.surface)->step_id;
 
@@ -130,7 +134,7 @@ static int CL_FindFootstepSurface(int entnum)
 
         CL_Trace(&tr, trace_start, trace_mins, trace_maxs, new_end, MASK_SOLID | MASK_WATER);
         // if we hit something else, use that new footstep id instead of the first traces' value
-        if (tr.surface != &(nulltexinfo.c))
+        if (tr.surface && tr.surface != &(nulltexinfo.c))
             footstep_id = ((mtexinfo_t *)tr.surface)->step_id;
     }
 

@@ -16,10 +16,32 @@
 extern "C" {
 #include "common/common.h"
 #include "common/cvar.h"
+#if USE_CLIENT
+#include "common/bsp.h"
+#endif
 }
 
 extern cvar_t *terrain_enable;
 extern cvar_t *terrain_collision;
+
+#if USE_CLIENT
+/*
+ * Footstep code (tent.c) casts trace.surface (csurface_t *) back to mtexinfo_t * and reads step_id.
+ * Terrain hits must point at the leading csurface_t inside a static mtexinfo_t — same layout as BSP traces.
+ */
+static mtexinfo_t terrain_collision_footstep_texinfo;
+static bool terrain_collision_footstep_texinfo_ready;
+
+static void Terrain_Internal_InitFootstepSurface(void)
+{
+    if (terrain_collision_footstep_texinfo_ready)
+        return;
+    memset(&terrain_collision_footstep_texinfo, 0, sizeof(terrain_collision_footstep_texinfo));
+    Q_strlcpy(terrain_collision_footstep_texinfo.c.name, "terrain", sizeof(terrain_collision_footstep_texinfo.c.name));
+    terrain_collision_footstep_texinfo.step_id = FOOTSTEP_ID_DEFAULT;
+    terrain_collision_footstep_texinfo_ready = true;
+}
+#endif /* USE_CLIENT */
 
 static bool ray_triangle_mt(const vec3_t orig, const vec3_t dir_u,
                             float seg_len,
@@ -181,7 +203,12 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
     out_tr->plane.dist = DotProduct(hitpos, best_n);
     out_tr->plane.type = PLANE_NON_AXIAL;
     out_tr->plane.signbits = 0;
+#if USE_CLIENT
+    Terrain_Internal_InitFootstepSurface();
+    out_tr->surface = &terrain_collision_footstep_texinfo.c;
+#else
     out_tr->surface = nullptr;
+#endif
     out_tr->contents = CONTENTS_SOLID;
     out_tr->ent = nullptr;
 
@@ -217,7 +244,6 @@ extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const 
         return;
 
     *dst = ter;
-    dst->surface = nullptr;
     dst->ent = world_ent;
 }
 
