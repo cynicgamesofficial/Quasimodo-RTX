@@ -17,6 +17,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 */
 
 #include "client.h"
+#include "terrain/terrain.h"
 
 /*
 ===================
@@ -116,6 +117,7 @@ void CL_Trace(trace_t *tr, const vec3_t start, const vec3_t mins, const vec3_t m
 {
     // check against world
     CM_BoxTrace(tr, start, end, mins, maxs, cl.bsp->nodes, contentmask);
+    Terrain_MergeWorldTrace(tr, start, end, mins, maxs, contentmask, (struct edict_s *)cl_entities);
     if (tr->fraction < 1.0f)
         tr->ent = (struct edict_s *)cl_entities;
 

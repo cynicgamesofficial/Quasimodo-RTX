@@ -20,6 +20,7 @@ extern const jungle_document_t *TerrainJungle_GetLoaded(void);
 extern cvar_t *terrain_enable;
 extern cvar_t *terrain_water;
 extern cvar_t *terrain_water_level;
+extern cvar_t *terrain_collision;
 extern cvar_t *terrain_show_chunks;
 extern cvar_t *terrain_show_lod;
 extern cvar_t *terrain_show_seams;
@@ -66,6 +67,16 @@ void TerrainDebug_PrintInfo(void)
     Com_Printf("[TERRAIN] --- terrain_info ---\n");
     Com_Printf("[TERRAIN] loaded: %s\n", Terrain_IsLoaded() ? "yes" : "no");
     Com_Printf("[TERRAIN] terrain_enable: %d\n", terrain_enable && terrain_enable->integer ? 1 : 0);
+    Com_Printf("[TERRAIN] terrain_collision: %d\n", terrain_collision && terrain_collision->integer ? 1 : 0);
+    {
+        const bool col_active = terrain_enable && terrain_enable->integer && terrain_collision && terrain_collision->integer
+            && Terrain_IsLoaded();
+        Com_Printf("[TERRAIN] collision active: %s\n", col_active ? "yes" : "no");
+    }
+    Com_Printf("[TERRAIN] collision mode: heightfield segment (ray), no swept AABB; see Phase 7B\n");
+    Com_Printf("[TERRAIN] q2rtxded terrain collision: deferred (dedicated server has no terrain .jungle/CPU data in this build)\n");
+    Com_Printf("[TERRAIN] point contents: deferred (no terrain solid/underfoot query in Phase 7B)\n");
+    Com_Printf("[TERRAIN] seam collision: deferred (no .patch on jungletest; no seam raycast API)\n");
 
     const jungle_document_t *d = TerrainJungle_GetLoaded();
     if (d) {

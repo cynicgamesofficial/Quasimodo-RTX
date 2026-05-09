@@ -19,6 +19,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "server.h"
 
+#if defined(USE_CLIENT) && defined(QUASIMODO_TERRAIN) && QUASIMODO_TERRAIN
+#include "../client/terrain/terrain.h"
+#endif
+
 /*
 ===============================================================================
 
@@ -569,6 +573,9 @@ trace_t q_gameabi SV_Trace(const vec3_t start, const vec3_t mins,
     // clip to world
     CM_BoxTrace(&trace, start, end, mins, maxs, sv.cm.cache->nodes, contentmask);
     trace.ent = ge->edicts;
+#if defined(USE_CLIENT) && defined(QUASIMODO_TERRAIN) && QUASIMODO_TERRAIN
+    Terrain_MergeWorldTrace(&trace, start, end, mins, maxs, contentmask, ge->edicts);
+#endif
     if (trace.fraction == 0) {
         return trace;   // blocked by the world
     }

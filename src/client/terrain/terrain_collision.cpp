@@ -188,4 +188,37 @@ bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t e
     return true;
 }
 
+extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const vec3_t end, const vec3_t mins,
+                                        const vec3_t maxs, int contentmask, struct edict_s *world_ent)
+{
+    (void)mins;
+    (void)maxs;
+
+    if (!dst)
+        return;
+
+    /* Terrain ground is solid; do not apply to masks that never test world solid. */
+    if (!(contentmask & CONTENTS_SOLID))
+        return;
+
+    /* Keep BSP stuck-in-solid behavior authoritative; do not replace with segment hits. */
+    if (dst->allsolid || dst->startsolid)
+        return;
+
+    trace_t ter;
+
+    memset(&ter, 0, sizeof(ter));
+    ter.fraction = 1.f;
+
+    if (!Terrain_Internal_TraceHeightfieldSegment(start, end, &ter))
+        return;
+
+    if (!(ter.fraction < dst->fraction))
+        return;
+
+    *dst = ter;
+    dst->surface = nullptr;
+    dst->ent = world_ent;
+}
+
 #endif /* QUASIMODO_TERRAIN */

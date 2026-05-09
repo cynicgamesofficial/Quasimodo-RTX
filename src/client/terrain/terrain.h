@@ -29,6 +29,7 @@ extern cvar_t *terrain_water_level;
 extern cvar_t *terrain_lod_bias;
 extern cvar_t *terrain_rtx_instance;
 extern cvar_t *terrain_uv_scale;
+extern cvar_t *terrain_build_blas_on_load;
 
 VkResult Terrain_InitVk(void);
 VkResult Terrain_DestroyVk(void);
@@ -49,10 +50,24 @@ void Terrain_PerFrameBegin(void);
 void Terrain_PerFrameEnd(void);
 void Terrain_InstanceBLAS(void);
 
+/* Deferred terrain GPU upload runs before first SCR_UpdateScreen after map load when terrain_build_blas_on_load is 0. */
+void Terrain_PreFrameRenderHook(void);
+
 void Terrain_TraceLine(trace_t *trace,
                        const vec3_t start, const vec3_t end,
                        const vec3_t mins, const vec3_t maxs,
                        int brushmask);
+
+/*
+ * Phase 7B — after CM_BoxTrace against world BSP, optionally merge a terrain heightfield segment hit.
+ * No-op when terrain is unavailable or Terrain_Internal_TraceHeightfieldSegment misses (see terrain_collision.cpp).
+ * Requires contentmask & CONTENTS_SOLID for terrain solid hits.
+ */
+void Terrain_MergeWorldTrace(trace_t *dst,
+                             const vec3_t start, const vec3_t end,
+                             const vec3_t mins, const vec3_t maxs,
+                             int contentmask,
+                             struct edict_s *world_ent);
 
 int Terrain_PointContents(const vec3_t p);
 

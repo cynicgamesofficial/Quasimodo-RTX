@@ -43,6 +43,8 @@ void Terrain_PerFrameBegin(void) {}
 void Terrain_PerFrameEnd(void) {}
 void Terrain_InstanceBLAS(void) {}
 
+void Terrain_PreFrameRenderHook(void) {}
+
 void Terrain_TraceLine(trace_t *trace,
                        const vec3_t start, const vec3_t end,
                        const vec3_t mins, const vec3_t maxs,
@@ -54,6 +56,21 @@ void Terrain_TraceLine(trace_t *trace,
     (void)mins;
     (void)maxs;
     (void)brushmask;
+}
+
+void Terrain_MergeWorldTrace(trace_t *dst,
+                             const vec3_t start, const vec3_t end,
+                             const vec3_t mins, const vec3_t maxs,
+                             int contentmask,
+                             struct edict_s *world_ent)
+{
+    (void)dst;
+    (void)start;
+    (void)end;
+    (void)mins;
+    (void)maxs;
+    (void)contentmask;
+    (void)world_ent;
 }
 
 int Terrain_PointContents(const vec3_t p)
@@ -79,3 +96,4 @@ cvar_t *terrain_lod_bias;
 /* terrain_rtx_instance: not registered when QUASIMODO_TERRAIN is off; Terrain_InstanceBLAS no-ops */
 cvar_t *terrain_rtx_instance;
 cvar_t *terrain_uv_scale;
+cvar_t *terrain_build_blas_on_load;

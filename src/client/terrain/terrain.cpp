@@ -12,6 +12,8 @@ extern "C" {
 #include "common/files.h"
 }
 
+#include <string.h>
+
 extern bool TerrainJungle_LoadFromVFS(const char *vfs_path, char *errbuf, size_t errbuf_sz);
 extern void TerrainJungle_UnloadAll(void);
 extern void TerrainJungle_PrintLoaded(void);
@@ -112,6 +114,7 @@ cvar_t *terrain_water_level;
 cvar_t *terrain_lod_bias;
 cvar_t *terrain_rtx_instance;
 cvar_t *terrain_uv_scale;
+cvar_t *terrain_build_blas_on_load;
 
 static bool Terrain_IsSubsystemEnabled(void)
 {
@@ -270,6 +273,8 @@ static void Terrain_Cmd_Probe_f(void)
     Com_Printf("[TERRAIN] loaded: %s\n", terrain_loaded ? "yes" : "no");
     Com_Printf("[TERRAIN] terrain_enable: %d\n", Terrain_IsSubsystemEnabled() ? 1 : 0);
     Com_Printf("[TERRAIN] terrain_collision: %d\n", Terrain_IsCollisionEnabled() ? 1 : 0);
+    Com_Printf(
+        "[TERRAIN] collision: heightfield segment (ray) only; mins/maxs ignored; q2rtxded has no terrain merge in this build\n");
     Com_Printf("[TERRAIN] terrain_water cvar: %d\n", terrain_water && terrain_water->integer ? 1 : 0);
 
     if (terrain_last_jungle_vfs[0])
@@ -377,6 +382,7 @@ static void Terrain_RegisterVarsAndCommands(void)
     terrain_lod_bias = Cvar_Get("terrain_lod_bias", "0", CVAR_ARCHIVE);
     terrain_rtx_instance = Cvar_Get("terrain_rtx_instance", "0", 0);
     terrain_uv_scale = Cvar_Get("terrain_uv_scale", "0.0078125", CVAR_ARCHIVE);
+    terrain_build_blas_on_load = Cvar_Get("terrain_build_blas_on_load", "0", CVAR_ARCHIVE);
 
     Cmd_AddCommand("terrain_load", Terrain_Cmd_Load_f);
     Cmd_AddCommand("terrain_unload", Terrain_Cmd_Unload_f);
@@ -511,22 +517,35 @@ void Terrain_InstanceBLAS(void)
 #endif
 }
 
+void Terrain_PreFrameRenderHook(void)
+{
+#if QUASIMODO_TERRAIN
+    Terrain_RunDeferredGpuUploadIfAny();
+#endif
+}
+
 void Terrain_TraceLine(trace_t *trace,
                        const vec3_t start, const vec3_t end,
                        const vec3_t mins, const vec3_t maxs,
                        int brushmask)
 {
-    (void)start;
-    (void)end;
     (void)mins;
     (void)maxs;
-    (void)brushmask;
 
-    if (!terrain_registered || !Terrain_IsSubsystemEnabled() || !Terrain_IsCollisionEnabled()) {
+    if (!trace)
         return;
-    }
 
-    (void)trace;
+    memset(trace, 0, sizeof(*trace));
+    trace->fraction = 1.f;
+
+    if (!terrain_registered || !Terrain_IsSubsystemEnabled() || !Terrain_IsCollisionEnabled())
+        return;
+    if (!(brushmask & CONTENTS_SOLID))
+        return;
+
+#if QUASIMODO_TERRAIN
+    Terrain_Internal_TraceHeightfieldSegment(start, end, trace);
+#endif
 }
 
 int Terrain_PointContents(const vec3_t p)
