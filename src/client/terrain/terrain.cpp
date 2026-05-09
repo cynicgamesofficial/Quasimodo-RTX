@@ -1,16 +1,24 @@
 /*
- * Quasimodo RTX — terrain subsystem (Phase 1 skeleton only).
+ * Quasimodo RTX — terrain subsystem (Phase 2: .jungle parse + CPU assets).
  */
 
 #include "terrain.h"
 
 extern "C" {
 #include "common/cmd.h"
+#include "common/common.h"
 #include "common/cvar.h"
+#include "common/files.h"
 }
+
+extern bool TerrainJungle_LoadFromVFS(const char *vfs_path, char *errbuf, size_t errbuf_sz);
+extern void TerrainJungle_UnloadAll(void);
+extern void TerrainJungle_PrintLoaded(void);
 
 static bool terrain_registered = false;
 static bool terrain_loaded = false;
+
+static char terrain_last_jungle_vfs[MAX_OSPATH];
 
 cvar_t *terrain_enable;
 cvar_t *terrain_collision;
@@ -36,6 +44,19 @@ static bool Terrain_IsCollisionEnabled(void)
 
 static void Terrain_RegisterVarsAndCommands(void);
 
+static void Terrain_BuildMapsJunglePath(const char *mapname, char *out, size_t out_sz)
+{
+    char stripped[MAX_QPATH];
+    COM_StripExtension(stripped, mapname, sizeof stripped);
+    const char *leaf = COM_SkipPath(stripped);
+    Q_snprintf(out, out_sz, "maps/%s.jungle", leaf);
+}
+
+static void Terrain_ClearLastPath(void)
+{
+    terrain_last_jungle_vfs[0] = '\0';
+}
+
 static void Terrain_Cmd_Load_f(void)
 {
     if (!terrain_registered) {
@@ -46,7 +67,33 @@ static void Terrain_Cmd_Load_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain loading not implemented in Phase 1\n");
+
+    const char *arg = Cmd_Argv(1);
+    if (!arg || !arg[0]) {
+        Com_Printf("[TERRAIN] usage: terrain_load <mapname | path/to/file.jungle>\n");
+        return;
+    }
+
+    char vfs[MAX_OSPATH];
+    if (strstr(arg, ".jungle")) {
+        Q_strlcpy(vfs, arg, sizeof vfs);
+    } else {
+        Terrain_BuildMapsJunglePath(arg, vfs, sizeof vfs);
+    }
+
+    char err[512];
+    TerrainJungle_UnloadAll();
+    terrain_loaded = false;
+
+    if (!TerrainJungle_LoadFromVFS(vfs, err, sizeof err)) {
+        Com_EPrintf("[TERRAIN] load failed (%s): %s\n", vfs, err);
+        Terrain_ClearLastPath();
+        return;
+    }
+
+    Q_strlcpy(terrain_last_jungle_vfs, vfs, sizeof terrain_last_jungle_vfs);
+    terrain_loaded = true;
+    Com_Printf("[TERRAIN] loaded \"%s\"\n", vfs);
 }
 
 static void Terrain_Cmd_Unload_f(void)
@@ -60,7 +107,7 @@ static void Terrain_Cmd_Unload_f(void)
         return;
     }
     Terrain_Unload();
-    Com_Printf("[TERRAIN] terrain unloaded (Phase 1 placeholder)\n");
+    Com_Printf("[TERRAIN] unloaded\n");
 }
 
 static void Terrain_Cmd_Reload_f(void)
@@ -73,7 +120,28 @@ static void Terrain_Cmd_Reload_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain_reload not implemented in Phase 1\n");
+
+    if (!terrain_last_jungle_vfs[0]) {
+        Com_Printf("[TERRAIN] terrain_reload: no previous .jungle path\n");
+        return;
+    }
+
+    char saved[MAX_OSPATH];
+    Q_strlcpy(saved, terrain_last_jungle_vfs, sizeof saved);
+
+    TerrainJungle_UnloadAll();
+    terrain_loaded = false;
+
+    char err[512];
+    if (!TerrainJungle_LoadFromVFS(saved, err, sizeof err)) {
+        Com_EPrintf("[TERRAIN] reload failed (%s): %s\n", saved, err);
+        Terrain_ClearLastPath();
+        return;
+    }
+
+    Q_strlcpy(terrain_last_jungle_vfs, saved, sizeof terrain_last_jungle_vfs);
+    terrain_loaded = true;
+    Com_Printf("[TERRAIN] reloaded \"%s\"\n", saved);
 }
 
 static void Terrain_Cmd_Info_f(void)
@@ -82,9 +150,12 @@ static void Terrain_Cmd_Info_f(void)
         Com_Printf("[TERRAIN] terrain system not initialized\n");
         return;
     }
-    Com_Printf("[TERRAIN] Phase 1 skeleton\n");
     Com_Printf("[TERRAIN] terrain_enable: %d\n", Terrain_IsSubsystemEnabled() ? 1 : 0);
     Com_Printf("[TERRAIN] loaded: %s\n", terrain_loaded ? "yes" : "no");
+    if (terrain_last_jungle_vfs[0])
+        Com_Printf("[TERRAIN] last path: %s\n", terrain_last_jungle_vfs);
+    if (terrain_loaded)
+        TerrainJungle_PrintLoaded();
 }
 
 static void Terrain_Cmd_Probe_f(void)
@@ -97,7 +168,7 @@ static void Terrain_Cmd_Probe_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain_probe not implemented in Phase 1\n");
+    Com_Printf("[TERRAIN] terrain_probe (placeholder Phase 2)\n");
 }
 
 static void Terrain_Cmd_DumpChunks_f(void)
@@ -110,7 +181,7 @@ static void Terrain_Cmd_DumpChunks_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain_dump_chunks not implemented in Phase 1\n");
+    Com_Printf("[TERRAIN] terrain_dump_chunks not implemented yet\n");
 }
 
 static void Terrain_Cmd_Rebuild_f(void)
@@ -123,7 +194,7 @@ static void Terrain_Cmd_Rebuild_f(void)
         Com_Printf("[TERRAIN] terrain_enable is 0\n");
         return;
     }
-    Com_Printf("[TERRAIN] terrain_rebuild not implemented in Phase 1\n");
+    Com_Printf("[TERRAIN] terrain_rebuild not implemented yet\n");
 }
 
 static void Terrain_RegisterVarsAndCommands(void)
@@ -168,6 +239,7 @@ void Terrain_Init(void)
 
     Terrain_RegisterVarsAndCommands();
     terrain_registered = true;
+    Terrain_ClearLastPath();
     Com_Printf("[TERRAIN] terrain system initialized\n");
 }
 
@@ -184,19 +256,38 @@ void Terrain_Shutdown(void)
 
 bool Terrain_LoadJungle(const char *mapname)
 {
-    (void)mapname;
-
     if (!terrain_registered || !Terrain_IsSubsystemEnabled()) {
         return false;
     }
 
-    Com_Printf("[TERRAIN] terrain loading not implemented in Phase 1\n");
-    return false;
+    char path[MAX_OSPATH];
+    Terrain_BuildMapsJunglePath(mapname, path, sizeof path);
+
+    if (!FS_FileExists(path)) {
+        Com_DPrintf("[TERRAIN] missing optional %s\n", path);
+        return false;
+    }
+
+    char err[512];
+    TerrainJungle_UnloadAll();
+    terrain_loaded = false;
+
+    if (!TerrainJungle_LoadFromVFS(path, err, sizeof err)) {
+        Com_EPrintf("[TERRAIN] failed parsing %s: %s\n", path, err);
+        Terrain_ClearLastPath();
+        return false;
+    }
+
+    Q_strlcpy(terrain_last_jungle_vfs, path, sizeof terrain_last_jungle_vfs);
+    terrain_loaded = true;
+    return true;
 }
 
 void Terrain_Unload(void)
 {
+    TerrainJungle_UnloadAll();
     terrain_loaded = false;
+    Terrain_ClearLastPath();
 }
 
 bool Terrain_IsLoaded(void)

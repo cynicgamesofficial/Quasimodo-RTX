@@ -26,6 +26,7 @@ extern cvar_t *terrain_lod_bias;
 void Terrain_Init(void);
 void Terrain_Shutdown(void);
 
+/* Loads maps/<map>.jungle via FS when terrain_enable is non-zero; optional file. */
 bool Terrain_LoadJungle(const char *mapname);
 void Terrain_Unload(void);
 bool Terrain_IsLoaded(void);

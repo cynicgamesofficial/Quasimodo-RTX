@@ -155,9 +155,13 @@ SET(HEADERS_CLIENT
 IF(QUASIMODO_TERRAIN)
 	SET(SRC_TERRAIN
 		client/terrain/terrain.cpp
+		client/terrain/terrain_jungle.cpp
+		client/terrain/terrain_asset.cpp
+		client/terrain/terrain_seam.cpp
 	)
 	SET(HEADERS_TERRAIN
 		client/terrain/terrain.h
+		client/terrain/jungle_json.h
 	)
 ELSE()
 	SET(SRC_TERRAIN
