@@ -15,7 +15,13 @@
     "origin": [-512, -512, 52],
     "chunk_size": 16,
     "lod_count": 3,
-    "lod_morph": false
+    "lod_morph": false,
+    "splatmap": "terrain/test_flat/splat.png",
+    "materials": [
+      "textures/e1u1/floor3_2.wal",
+      "textures/e1u1/floor3_1.wal",
+      "textures/e1u1/floor1_3.wal"
+    ]
   },
   "water": {
     "enabled": true,
