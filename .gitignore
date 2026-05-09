@@ -75,13 +75,25 @@ Third Parties/NRD/
 Third Parties/NRD/**
 Third Parties/NVIDIA/
 Third Parties/NVIDIA/**
+Third Parties/DLSS/
+Third Parties/DLSS/**
 
 # Ignore the entire Streamline SDK folder.
 streamline/
 streamline/**
+streamline/bin/x64/*.dll
+streamline/bin/x64/backup*/
 sl.common.json
 sl.imgui.json
 sl.reflex.json
+
+# Runtime/script test artifacts.
+e3a_validation_*
+rr_*_test_*
+rr_extended_render_*
+dlss_sr_dll_swap_*
+dlss_script_setup_*
+*.err
 
 # Ignore RTXDI third-party folder.
 Third Parties/RTXDI/

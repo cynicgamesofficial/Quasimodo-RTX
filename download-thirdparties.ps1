@@ -1,7 +1,12 @@
 # Download and unpack third-party SDKs into Third Parties\
 # - Streamline SDK v2.10.3 -> Third Parties\NVIDIA
-# - NRD SDK v4.17.2      -> Third Parties\NRD       (https://github.com/NVIDIA-RTX/NRD) — NRD_ROOT
-# - NRI (NRD dependency) -> Third Parties\NRD\NRI   (https://github.com/NVIDIA-RTX/NRI) — matches NRD v4.17.2 / tag v178
+# - DLSS SDK v310.6.0      -> Third Parties\DLSS
+# - NRD SDK v4.17.2        -> Third Parties\NRD       (https://github.com/NVIDIA-RTX/NRD) — NRD_ROOT
+# - NRI (NRD dependency)   -> Third Parties\NRD\NRI   (https://github.com/NVIDIA-RTX/NRI) — matches NRD v4.17.2 / tag v178
+
+param(
+    [switch]$DlssOnly
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -11,32 +16,118 @@ $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # --- Streamline ----------------------------------------------------------
-$StreamlineUrl    = "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.10.3/streamline-sdk-v2.10.3.zip"
-$StreamlineSha256 = "8564646ca6dd7c3960370d05b06054549563f499bfb93d160b46b7494a47bb3c"
-$NvidiaDir        = Join-Path $RepoRoot "Third Parties\NVIDIA"
-$StreamlineZip    = Join-Path $NvidiaDir "streamline-sdk-v2.10.3.zip"
+if (-not $DlssOnly) {
+    $StreamlineUrl    = "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.10.3/streamline-sdk-v2.10.3.zip"
+    $StreamlineSha256 = "8564646ca6dd7c3960370d05b06054549563f499bfb93d160b46b7494a47bb3c"
+    $NvidiaDir        = Join-Path $RepoRoot "Third Parties\NVIDIA"
+    $StreamlineZip    = Join-Path $NvidiaDir "streamline-sdk-v2.10.3.zip"
 
-Write-Host "[INFO] Streamline: creating target directory: $NvidiaDir"
-New-Item -ItemType Directory -Path $NvidiaDir -Force | Out-Null
+    Write-Host "[INFO] Streamline: creating target directory: $NvidiaDir"
+    New-Item -ItemType Directory -Path $NvidiaDir -Force | Out-Null
 
-Write-Host "[INFO] Streamline: downloading SDK v2.10.3..."
-Invoke-WebRequest -Uri $StreamlineUrl -OutFile $StreamlineZip -UseBasicParsing
+    Write-Host "[INFO] Streamline: downloading SDK v2.10.3..."
+    Invoke-WebRequest -Uri $StreamlineUrl -OutFile $StreamlineZip -UseBasicParsing
 
-Write-Host "[INFO] Streamline: verifying SHA256..."
-$hash = (Get-FileHash -Path $StreamlineZip -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($hash -ne $StreamlineSha256.ToLowerInvariant()) {
-    Write-Error "Streamline SHA256 mismatch. Expected: $StreamlineSha256  Got: $hash"
+    Write-Host "[INFO] Streamline: verifying SHA256..."
+    $hash = (Get-FileHash -Path $StreamlineZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($hash -ne $StreamlineSha256.ToLowerInvariant()) {
+        Write-Error "Streamline SHA256 mismatch. Expected: $StreamlineSha256  Got: $hash"
+        exit 1
+    }
+    Write-Host "[INFO] Streamline: SHA256 verified OK."
+
+    Write-Host "[INFO] Streamline: extracting..."
+    Expand-Archive -Path $StreamlineZip -DestinationPath $NvidiaDir -Force
+
+    Write-Host "[INFO] Streamline: removing downloaded zip..."
+    Remove-Item -Path $StreamlineZip -Force
+
+    Write-Host "[INFO] Streamline: done. Extracted to: $NvidiaDir"
+} else {
+    Write-Host "[INFO] DLSS-only mode enabled; skipping Streamline download."
+}
+
+# --- DLSS ----------------------------------------------------------------
+$DlssTag             = "v310.6.0"
+$DlssExpectedCommit  = "d1bef2006b41eefd9d44b0a05f123993f3acbf3c"
+$DlssRepoUrl         = "https://github.com/NVIDIA/DLSS.git"
+$DlssTargetDir       = Join-Path $RepoRoot "Third Parties\DLSS"
+$DlssRuntimeSource   = Join-Path $DlssTargetDir "lib\Windows_x86_64\rel\nvngx_dlss.dll"
+$DlssRuntimeDest     = Join-Path $RepoRoot "streamline\bin\x64\nvngx_dlss.dll"
+$DlssBackupDir       = Join-Path $RepoRoot "streamline\bin\x64\backup_nvngx_dlss_before_script"
+$DlssBackupPath      = Join-Path $DlssBackupDir "nvngx_dlss.dll"
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "DLSS: git is required to clone pinned SDK tag $DlssTag."
     exit 1
 }
-Write-Host "[INFO] Streamline: SHA256 verified OK."
 
-Write-Host "[INFO] Streamline: extracting..."
-Expand-Archive -Path $StreamlineZip -DestinationPath $NvidiaDir -Force
+if (Test-Path $DlssTargetDir) {
+    Write-Host "[INFO] DLSS: removing existing directory: $DlssTargetDir"
+    Remove-Item -Path $DlssTargetDir -Recurse -Force
+}
 
-Write-Host "[INFO] Streamline: removing downloaded zip..."
-Remove-Item -Path $StreamlineZip -Force
+Write-Host "[INFO] DLSS: cloning tag $DlssTag from $DlssRepoUrl ..."
+$cloneCmd = "git clone --branch `"$DlssTag`" --depth 1 -- `"$DlssRepoUrl`" `"$DlssTargetDir`""
+$oldErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+cmd /c $cloneCmd
+$cloneExitCode = $LASTEXITCODE
+$ErrorActionPreference = $oldErrorActionPreference
+if ($cloneExitCode -ne 0) {
+    Write-Error "DLSS: failed to clone repository tag $DlssTag."
+    exit 1
+}
 
-Write-Host "[INFO] Streamline: done. Extracted to: $NvidiaDir"
+$dlssHead = (& git -C "$DlssTargetDir" rev-parse HEAD 2>$null).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dlssHead)) {
+    Write-Error "DLSS: failed to determine cloned commit hash."
+    exit 1
+}
+if ($dlssHead -ne $DlssExpectedCommit.ToLowerInvariant()) {
+    Write-Error "DLSS: unexpected commit for $DlssTag. Expected: $DlssExpectedCommit  Got: $dlssHead"
+    exit 1
+}
+Write-Host "[INFO] DLSS: pinned commit verified: $dlssHead"
+
+if (-not (Test-Path $DlssRuntimeSource)) {
+    Write-Error "DLSS: expected runtime DLL missing: $DlssRuntimeSource"
+    exit 1
+}
+
+$runtimeDestDir = Split-Path -Parent $DlssRuntimeDest
+New-Item -ItemType Directory -Path $runtimeDestDir -Force | Out-Null
+
+if (Test-Path $DlssRuntimeDest) {
+    Write-Host "[INFO] DLSS: backing up existing runtime DLL to: $DlssBackupPath"
+    New-Item -ItemType Directory -Path $DlssBackupDir -Force | Out-Null
+    Copy-Item -Path $DlssRuntimeDest -Destination $DlssBackupPath -Force
+}
+
+Write-Host "[INFO] DLSS: copying runtime DLL to streamline runtime folder..."
+Copy-Item -Path $DlssRuntimeSource -Destination $DlssRuntimeDest -Force
+
+$srcHash = (Get-FileHash -Path $DlssRuntimeSource -Algorithm SHA256).Hash.ToLowerInvariant()
+$dstHash = (Get-FileHash -Path $DlssRuntimeDest -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($srcHash -ne $dstHash) {
+    Write-Error "DLSS: runtime DLL hash mismatch after copy. Source: $srcHash  Destination: $dstHash"
+    exit 1
+}
+
+$srcItem = Get-Item $DlssRuntimeSource
+$dstItem = Get-Item $DlssRuntimeDest
+$srcVer  = $srcItem.VersionInfo
+$dstVer  = $dstItem.VersionInfo
+
+Write-Host "[INFO] DLSS: source   fileVersion=$($srcVer.FileVersion) productVersion=$($srcVer.ProductVersion) sha256=$srcHash"
+Write-Host "[INFO] DLSS: runtime  fileVersion=$($dstVer.FileVersion) productVersion=$($dstVer.ProductVersion) sha256=$dstHash"
+Write-Host "[INFO] DLSS: done. SDK at: $DlssTargetDir"
+
+if ($DlssOnly) {
+    Write-Host "[INFO] DLSS-only mode enabled; skipping NRD/NRI downloads."
+    Write-Host "[INFO] Third-party downloads finished."
+    exit 0
+}
 
 # --- NRD ----------------------------------------------------------------
 $NrdTag           = "v4.17.2"
