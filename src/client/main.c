@@ -3377,6 +3377,10 @@ unsigned CL_Frame(unsigned msec)
 
     UI_Frame(main_extra);
 
+#if QUASIMODO_TERRAIN
+    Terrain_PreFrameRenderHook();
+#endif
+
     if (ref_frame) {
         // update the screen
         if (host_speeds->integer)
@@ -3480,7 +3484,17 @@ void CL_Init(void)
 
     HTTP_Init();
 
-    UI_OpenMenu(UIMENU_DEFAULT);
+    /*
+     * Late argv (+map, +connect, ...) runs after CL_Init. Opening the default RmlUi menu
+     * here sets KEY_MENU before the map loads and blocks the normal startup flow.
+     * Skip the default menu for explicit launch commands; keep splash bypass in UI_Rml_Init.
+     */
+    if (Com_HasCommandLineDirectLaunch()) {
+        Con_Close(true);
+        cls.key_dest = KEY_GAME;
+    } else {
+        UI_OpenMenu(UIMENU_DEFAULT);
+    }
 
     Con_PostInit();
     Con_RunConsole();

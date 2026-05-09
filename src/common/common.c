@@ -835,6 +835,34 @@ static bool Com_AddLateCommands(void)
     return ret;
 }
 
+/*
+================
+Com_HasCommandLineDirectLaunch
+
+True when argv lists an explicit +map-style launch before late commands run.
+The word after '+' is the command name ("map", "connect", ...).
+================
+*/
+qboolean Com_HasCommandLineDirectLaunch(void)
+{
+    int i;
+    const char *s;
+
+    for (i = 1; i < com_argc; i++) {
+        s = com_argv[i];
+        if (!s || s[0] != '+')
+            continue;
+        s++;
+        if (!*s)
+            continue;
+        if (!Q_stricmp(s, "map") || !Q_stricmp(s, "gamemap") || !Q_stricmp(s, "connect") ||
+            !Q_stricmp(s, "demo"))
+            return qtrue;
+    }
+
+    return qfalse;
+}
+
 void Com_AddConfigFile(const char *name, unsigned flags)
 {
     int ret;

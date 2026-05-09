@@ -179,3 +179,9 @@ extern time_t       com_startTime;
 
 void Qcommon_Init(int argc, char **argv);
 void Qcommon_Frame(void);
+
+/*
+ * True if raw argv contains an explicit late-launch +command (+map, +connect, +demo, ...).
+ * Valid after Com_AddEarlyCommands(true): +set triples may be nulled; +map etc. remain.
+ */
+qboolean Com_HasCommandLineDirectLaunch(void);

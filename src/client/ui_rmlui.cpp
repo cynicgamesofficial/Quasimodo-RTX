@@ -6,6 +6,7 @@
 #include "ui/settings_menu.h"
 
 extern "C" {
+#include "common/common.h"
 #include "common/cmd.h"
 #include "common/cvar.h"
 #include "common/files.h"
@@ -809,9 +810,12 @@ void UI_Rml_Init(void)
 
     rmlui.initialized = true;
     rmlui.intro_done = false;
-    if (!ui_splash || !ui_splash->integer) {
+    if (!ui_splash || !ui_splash->integer || Com_HasCommandLineDirectLaunch()) {
         rmlui.intro_done = true;
-        debug_log("RmlUi: startup splash disabled (ui_splash 0)\n");
+        if (!ui_splash || !ui_splash->integer)
+            debug_log("RmlUi: startup splash disabled (ui_splash 0)\n");
+        else
+            debug_log("RmlUi: startup splash skipped (direct argv launch)\n");
     } else if (ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer) {
         rmlui.intro_done = true;
         debug_log("RmlUi: intro skipped by ui_rmlui_skip_intro\n");
@@ -1003,9 +1007,12 @@ void UI_Rml_Reload(void)
         })) {
             rmlui.intro_done = true;
         }
-    } else if (!ui_splash || !ui_splash->integer) {
+    } else if (!ui_splash || !ui_splash->integer || Com_HasCommandLineDirectLaunch()) {
         rmlui.intro_done = true;
-        debug_log("RmlUi: intro reload: startup splash disabled (ui_splash 0)\n");
+        if (!ui_splash || !ui_splash->integer)
+            debug_log("RmlUi: intro reload: startup splash disabled (ui_splash 0)\n");
+        else
+            debug_log("RmlUi: intro reload: splash skipped (direct argv launch)\n");
     } else if (ui_rmlui_skip_intro && ui_rmlui_skip_intro->integer) {
         rmlui.intro_done = true;
         debug_log("RmlUi: intro reload skipped by ui_rmlui_skip_intro\n");
