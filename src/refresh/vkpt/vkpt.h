@@ -643,6 +643,7 @@ VkResult vkpt_vertex_buffer_destroy(void);
 void vkpt_vertex_buffer_ensure_primbuf_size(uint32_t prim_count);
 VkResult vkpt_vertex_buffer_upload_bsp_mesh(bsp_mesh_t* bsp_mesh);
 void vkpt_vertex_buffer_cleanup_bsp_mesh(bsp_mesh_t *bsp_mesh);
+void vkpt_write_terrain_primitive_buffer_descriptor(VkBuffer buffer, VkDeviceSize size);
 VkResult vkpt_vertex_buffer_create_pipelines(void);
 VkResult vkpt_vertex_buffer_destroy_pipelines(void);
 VkResult vkpt_instance_geometry(VkCommandBuffer cmd_buf, uint32_t num_instances, bool update_world_animations);

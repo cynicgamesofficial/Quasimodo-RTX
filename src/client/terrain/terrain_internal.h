@@ -141,6 +141,7 @@ void TerrainDebug_DumpChunks(void);
 void TerrainDebug_ProbeExtra(float world_x, float world_y);
 
 void TerrainRender_DebugAppendInfo(void);
+void Terrain_InstanceBLAS_Vk(void);
 
 int TerrainSeam_GetCpuMeshCount(void);
 

@@ -78,3 +78,4 @@ cvar_t *terrain_water_level;
 cvar_t *terrain_lod_bias;
 /* terrain_rtx_instance: not registered when QUASIMODO_TERRAIN is off; Terrain_InstanceBLAS no-ops */
 cvar_t *terrain_rtx_instance;
+cvar_t *terrain_uv_scale;

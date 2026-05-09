@@ -54,6 +54,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define VERTEX_BUFFER_INSTANCED 1
 #define VERTEX_BUFFER_FIRST_MODEL 2
 
+/* Shaders do not include shared.h; keep in sync with MAX_MODELS for RTX client builds. */
+#ifndef MAX_MODELS
+#define MAX_MODELS 8192
+#endif
+#define VERTEX_BUFFER_TERRAIN (VERTEX_BUFFER_FIRST_MODEL + MAX_MODELS)
+
 #define SUN_COLOR_ACCUMULATOR_FIXED_POINT_SCALE 0x100000
 #define SKY_COLOR_ACCUMULATOR_FIXED_POINT_SCALE 0x100
 
@@ -349,6 +355,11 @@ load_and_transform_triangle(int instance_idx, uint buffer_idx, uint prim_id)
 	{
 		// Static BSP primitive.
 		
+		t.instance_index = ~0u;
+		t.instance_prim = prim_id;
+	}
+	else if (buffer_idx == VERTEX_BUFFER_TERRAIN)
+	{
 		t.instance_index = ~0u;
 		t.instance_prim = prim_id;
 	}

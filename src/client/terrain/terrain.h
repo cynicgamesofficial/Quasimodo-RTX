@@ -28,6 +28,7 @@ extern cvar_t *terrain_water_debug;
 extern cvar_t *terrain_water_level;
 extern cvar_t *terrain_lod_bias;
 extern cvar_t *terrain_rtx_instance;
+extern cvar_t *terrain_uv_scale;
 
 VkResult Terrain_InitVk(void);
 VkResult Terrain_DestroyVk(void);

@@ -784,6 +784,28 @@ static void write_model_vbo_descriptor(int index, VkBuffer buffer, VkDeviceSize 
 	vkUpdateDescriptorSets(qvk.device, 1, &write_descriptor_set, 0, NULL);
 }
 
+void
+vkpt_write_terrain_primitive_buffer_descriptor(VkBuffer buffer, VkDeviceSize size)
+{
+	VkDescriptorBufferInfo descriptor_buffer_info = {
+		.buffer = buffer,
+		.offset = 0,
+		.range = size,
+	};
+
+	VkWriteDescriptorSet write_descriptor_set = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = qvk.desc_set_vertex_buffer,
+		.dstBinding = PRIMITIVE_BUFFER_BINDING_IDX,
+		.dstArrayElement = VERTEX_BUFFER_TERRAIN,
+		.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+		.descriptorCount = 1,
+		.pBufferInfo = &descriptor_buffer_info,
+	};
+
+	vkUpdateDescriptorSets(qvk.device, 1, &write_descriptor_set, 0, NULL);
+}
+
 static void destroy_model_vbo(model_vbo_t* vbo)
 {
 	vkpt_destroy_model_geometry(&vbo->geom_opaque);
@@ -1239,7 +1261,7 @@ vkpt_vertex_buffer_create()
 	VkDescriptorSetLayoutBinding vbo_layout_bindings[] = {
 		{
 			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = VERTEX_BUFFER_FIRST_MODEL + MAX_MODELS,
+			.descriptorCount = VERTEX_BUFFER_FIRST_MODEL + MAX_MODELS + 1,
 			.binding = PRIMITIVE_BUFFER_BINDING_IDX,
 			.stageFlags = VK_SHADER_STAGE_ALL,
 		},

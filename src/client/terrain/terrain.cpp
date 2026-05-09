@@ -111,6 +111,7 @@ cvar_t *terrain_water_debug;
 cvar_t *terrain_water_level;
 cvar_t *terrain_lod_bias;
 cvar_t *terrain_rtx_instance;
+cvar_t *terrain_uv_scale;
 
 static bool Terrain_IsSubsystemEnabled(void)
 {
@@ -373,6 +374,7 @@ static void Terrain_RegisterVarsAndCommands(void)
     terrain_water_level = Cvar_Get("terrain_water_level", "0", CVAR_ARCHIVE);
     terrain_lod_bias = Cvar_Get("terrain_lod_bias", "0", CVAR_ARCHIVE);
     terrain_rtx_instance = Cvar_Get("terrain_rtx_instance", "0", 0);
+    terrain_uv_scale = Cvar_Get("terrain_uv_scale", "0.0078125", CVAR_ARCHIVE);
 
     Cmd_AddCommand("terrain_load", Terrain_Cmd_Load_f);
     Cmd_AddCommand("terrain_unload", Terrain_Cmd_Unload_f);
@@ -501,7 +503,7 @@ void Terrain_InstanceBLAS(void)
     if (!terrain_rtx_instance || !terrain_rtx_instance->integer) {
         return;
     }
-    /* Phase 5B: TLAS terrain instancing + primitive buffer / shader contract */
+    Terrain_InstanceBLAS_Vk();
 #endif
 }
 
