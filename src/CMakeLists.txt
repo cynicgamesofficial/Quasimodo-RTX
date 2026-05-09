@@ -580,6 +580,10 @@ IF (TARGET client)
                     file(GLOB STREAMLINE_RUNTIME_DLLS "${STREAMLINE_RUNTIME_SOURCE_DIR}/*.dll")
                     foreach(runtime_dll ${STREAMLINE_RUNTIME_DLLS})
                         get_filename_component(runtime_dll_name "${runtime_dll}" NAME)
+                        if(runtime_dll_name STREQUAL "nvngx_dlss.dll")
+                            # Keep nvngx_dlss.dll sourced from Third Parties/DLSS when available.
+                            continue()
+                        endif()
                         add_custom_command(TARGET client POST_BUILD
                             COMMAND ${CMAKE_COMMAND} -E make_directory "${STREAMLINE_RUNTIME_BIN_DIR}"
                             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -596,6 +600,16 @@ IF (TARGET client)
                             )
                         endif()
                     endforeach()
+                    set(DLSS_SDK_RUNTIME_DLL "${CMAKE_SOURCE_DIR}/Third Parties/DLSS/lib/Windows_x86_64/rel/nvngx_dlss.dll")
+                    if(EXISTS "${DLSS_SDK_RUNTIME_DLL}")
+                        add_custom_command(TARGET client POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E make_directory "${STREAMLINE_RUNTIME_BIN_DIR}"
+                            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${DLSS_SDK_RUNTIME_DLL}"
+                                "${STREAMLINE_RUNTIME_BIN_DIR}/nvngx_dlss.dll"
+                            COMMENT "Copying DLSS SDK nvngx_dlss.dll to Streamline runtime directory"
+                        )
+                    endif()
                 else()
                     MESSAGE(STATUS "Streamline runtime DLLs not found under ${STREAMLINE_BIN_DEV_DIR} or ${STREAMLINE_BIN_DIR}")
                 endif()
