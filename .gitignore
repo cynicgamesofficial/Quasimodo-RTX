@@ -50,6 +50,8 @@ sl.reflex.json
 q2config.cfg
 save
 */docs
+!.cursor/docs/
+!.cursor/docs/**
 baseq2/**/*.txt
 !baseq2/*.txt
 !baseq2/maps/sky/*.txt
@@ -98,3 +100,6 @@ dlss_script_setup_*
 # Ignore RTXDI third-party folder.
 Third Parties/RTXDI/
 Third Parties/RTXDI/**
+
+# Local Cursor / editor workspace files may contain machine-specific paths
+*.code-workspace
