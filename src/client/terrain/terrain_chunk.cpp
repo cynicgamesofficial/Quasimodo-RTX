@@ -111,8 +111,17 @@ bool TerrainChunks_Build(void)
 
     const int w = hf.width;
     const int h = hf.height;
-    s_grid_w = (w + cs - 1) / cs;
-    s_grid_h = (h + cs - 1) / cs;
+    /*
+     * chunk_size = number of terrain cells (quads) along X/Y per chunk.
+     * Vertices must overlap one row/column between neighbors: chunk covering cs cells needs cs+1 sample
+     * indices on each axis → exclusive end is min(start + cs + 1, dim).
+     */
+    s_grid_w = 0;
+    for (int vx0 = 0; vx0 < w; vx0 += cs)
+        s_grid_w++;
+    s_grid_h = 0;
+    for (int vy0 = 0; vy0 < h; vy0 += cs)
+        s_grid_h++;
     s_chunk_count = s_grid_w * s_grid_h;
 
     if (s_chunk_count <= 0)
@@ -137,8 +146,8 @@ bool TerrainChunks_Build(void)
 
             const int sx0 = cx * cs;
             const int sy0 = cy * cs;
-            const int sx1_ex = sx0 + cs < w ? sx0 + cs : w;
-            const int sy1_ex = sy0 + cs < h ? sy0 + cs : h;
+            const int sx1_ex = sx0 + cs + 1 < w ? sx0 + cs + 1 : w;
+            const int sy1_ex = sy0 + cs + 1 < h ? sy0 + cs + 1 : h;
 
             c->grid_x = cx;
             c->grid_y = cy;
