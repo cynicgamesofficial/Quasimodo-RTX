@@ -19,6 +19,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 // cl_main.c  -- client main loop
 
 #include "client.h"
+#include "terrain/terrain.h"
 
 cvar_t  *rcon_address;
 
@@ -2929,6 +2930,8 @@ static void CL_InitLocal(void)
 	Cmd_AddMacro("cl_hdr_color", CL_HdrColor_m);
 	Cmd_AddMacro("cl_resolution_scale", CL_ResolutionScale_m);
     Cmd_AddMacro("cl_numentities", CL_NumEntities_m);
+
+    Terrain_Init();
 }
 
 /*
@@ -3513,6 +3516,8 @@ void CL_Shutdown(void)
     CL_GTV_Shutdown();
 
     CL_Disconnect(ERR_FATAL);
+
+    Terrain_Shutdown();
 
 #if USE_ZLIB
     inflateEnd(&cls.z);

@@ -152,6 +152,22 @@ SET(HEADERS_CLIENT
 	client/sound/qal/fixed.h
 )
 
+IF(QUASIMODO_TERRAIN)
+	SET(SRC_TERRAIN
+		client/terrain/terrain.cpp
+	)
+	SET(HEADERS_TERRAIN
+		client/terrain/terrain.h
+	)
+ELSE()
+	SET(SRC_TERRAIN
+		client/terrain/terrain_stub.cpp
+	)
+	SET(HEADERS_TERRAIN
+		client/terrain/terrain.h
+	)
+ENDIF()
+
 SET(SRC_SERVER
 	server/commands.c
 	server/entities.c
@@ -486,6 +502,7 @@ IF(WIN32)
     IF(IS_64_BIT)
         ADD_EXECUTABLE(client WIN32 
             ${SRC_CLIENT} ${HEADERS_CLIENT} 
+            ${SRC_TERRAIN} ${HEADERS_TERRAIN}
             ${SRC_COMMON} ${HEADERS_COMMON} 
             ${SRC_REFRESH} ${SRC_SHADERS} 
             ${SRC_SHARED} 
@@ -507,6 +524,7 @@ ELSE()
     IF(IS_64_BIT)
         ADD_EXECUTABLE(client
             ${SRC_CLIENT} ${HEADERS_CLIENT} 
+            ${SRC_TERRAIN} ${HEADERS_TERRAIN}
             ${SRC_COMMON} ${HEADERS_COMMON} 
             ${SRC_REFRESH} ${SRC_SHADERS} 
             ${SRC_SHARED} 
@@ -529,6 +547,9 @@ target_compile_options(server PRIVATE "${WARN_MISSING_PROTOTYPES}")
 
 IF (TARGET client)
     TARGET_COMPILE_DEFINITIONS(client PRIVATE USE_CLIENT=1 USE_FIXED_LIBAL=1 USE_SDL=1 "${COMMON_COMPILE_DEFS}")
+    IF(QUASIMODO_TERRAIN)
+        TARGET_COMPILE_DEFINITIONS(client PRIVATE QUASIMODO_TERRAIN=1)
+    ENDIF()
 
     IF(CONFIG_USE_CURL)
         TARGET_LINK_LIBRARIES(client libcurl)
@@ -670,6 +691,7 @@ SOURCE_GROUP("game\\sources" FILES ${SRC_GAME})
 SOURCE_GROUP("game\\headers" FILES ${HEADERS_GAME})
 SOURCE_GROUP("client\\sources" FILES ${SRC_CLIENT})
 SOURCE_GROUP("client\\headers" FILES ${HEADERS_CLIENT})
+SOURCE_GROUP("client\\terrain" FILES ${SRC_TERRAIN} ${HEADERS_TERRAIN})
 SOURCE_GROUP("server\\sources" FILES ${SRC_SERVER})
 SOURCE_GROUP("server\\headers" FILES ${HEADERS_SERVER})
 SOURCE_GROUP("common\\sources" FILES ${SRC_COMMON})
