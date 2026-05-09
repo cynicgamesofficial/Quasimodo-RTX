@@ -11,8 +11,8 @@
     "height": 65,
     "height_format": "uint16_le",
     "scale_xy": 32,
-    "scale_z": 8,
-    "origin": [-512, -512, -128],
+    "scale_z": 48,
+    "origin": [-512, -512, 20],
     "chunk_size": 16,
     "lod_count": 3,
     "lod_morph": false
