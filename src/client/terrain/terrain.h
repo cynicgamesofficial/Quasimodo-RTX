@@ -4,6 +4,10 @@
 
 #pragma once
 
+#if !defined(QUASIMODO_TERRAIN)
+#define QUASIMODO_TERRAIN 0
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -44,6 +48,43 @@ int Terrain_PointContents(const vec3_t p);
 
 void Terrain_OnSwapchainRecreate(void);
 void Terrain_OnPipelineReload(void);
+
+#if QUASIMODO_TERRAIN
+/*
+ * Phase 3 — CPU heightfield sampling (no GPU upload).
+ * When QUASIMODO_TERRAIN is 0 at compile time, these declarations are omitted.
+ */
+typedef struct terrain_heightfield_cpu_s {
+    int width;
+    int height;
+    char height_format[32];
+    float scale_xy;
+    float scale_z;
+    vec3_t origin;
+    const uint8_t *pixels;
+    size_t pixel_bytes;
+} terrain_heightfield_cpu_t;
+
+bool Terrain_Internal_GetActiveHeightfield(terrain_heightfield_cpu_t *out);
+
+bool TerrainHeightmap_SampleHeight(const terrain_heightfield_cpu_t *hf, float world_x, float world_y, float *out_z);
+bool TerrainHeightmap_SampleNormal(const terrain_heightfield_cpu_t *hf, float world_x, float world_y, vec3_t out_normal);
+bool TerrainHeightmap_SampleTexel(const terrain_heightfield_cpu_t *hf, int ix, int iy, float *out_z);
+
+bool Terrain_SampleHeight(float world_x, float world_y, float *out_z);
+bool Terrain_SampleNormal(float world_x, float world_y, vec3_t out_normal);
+
+/*
+ * Internal-only heightfield ray vs bilinear surface (Phase 3).
+ * Swept AABB vs terrain is not implemented; trace acts as a zero-thickness segment.
+ * On miss or when terrain is disabled / unavailable, returns false after initializing *out_tr to a clean miss
+ * (fraction 1, cleared flags). On hit, fills trace_t with the nearest intersection along the segment.
+ */
+bool Terrain_Internal_TraceHeightfieldSegment(const vec3_t start, const vec3_t end, trace_t *out_tr);
+
+void TerrainSeam_FreeAll(void);
+bool TerrainSeam_LoadFromPatchPaths(const char *const *paths, int count);
+#endif
 
 #ifdef __cplusplus
 }

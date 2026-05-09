@@ -157,10 +157,13 @@ IF(QUASIMODO_TERRAIN)
 		client/terrain/terrain.cpp
 		client/terrain/terrain_jungle.cpp
 		client/terrain/terrain_asset.cpp
+		client/terrain/terrain_heightmap.cpp
+		client/terrain/terrain_collision.cpp
 		client/terrain/terrain_seam.cpp
 	)
 	SET(HEADERS_TERRAIN
 		client/terrain/terrain.h
+		client/terrain/terrain_internal.h
 		client/terrain/jungle_json.h
 	)
 ELSE()

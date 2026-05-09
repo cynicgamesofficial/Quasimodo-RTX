@@ -1,8 +1,9 @@
 /*
- * Quasimodo RTX — terrain subsystem (Phase 2: .jungle parse + CPU assets).
+ * Quasimodo RTX — terrain subsystem (Phase 3: CPU heightfield + seams + internal traces).
  */
 
 #include "terrain.h"
+#include "terrain_internal.h"
 
 extern "C" {
 #include "common/cmd.h"
@@ -14,11 +15,72 @@ extern "C" {
 extern bool TerrainJungle_LoadFromVFS(const char *vfs_path, char *errbuf, size_t errbuf_sz);
 extern void TerrainJungle_UnloadAll(void);
 extern void TerrainJungle_PrintLoaded(void);
+extern const jungle_document_t *TerrainJungle_GetLoaded(void);
 
 static bool terrain_registered = false;
 static bool terrain_loaded = false;
 
 static char terrain_last_jungle_vfs[MAX_OSPATH];
+
+#if QUASIMODO_TERRAIN
+
+static bool terrain_try_load_seam_meshes(void)
+{
+    const jungle_document_t *d = TerrainJungle_GetLoaded();
+    if (!d || !d->seam_patch_paths || d->seam_patch_paths_count <= 0)
+        return true;
+
+    if (!TerrainSeam_LoadFromPatchPaths((const char *const *)d->seam_patch_paths,
+                                        d->seam_patch_paths_count)) {
+        Com_EPrintf("[TERRAIN] seam CPU tessellation failed (patch errors logged above)\n");
+        return false;
+    }
+    return true;
+}
+
+bool Terrain_Internal_GetActiveHeightfield(terrain_heightfield_cpu_t *out)
+{
+    if (!out || !terrain_registered || !terrain_enable || !terrain_enable->integer)
+        return false;
+
+    const jungle_document_t *d = TerrainJungle_GetLoaded();
+    if (!d || !d->cpu_heightmap || d->terrain_width < 2 || d->terrain_height < 2)
+        return false;
+
+    if (!TerrainHeightmap_ValidateCpuBuffer(d->terrain_width, d->terrain_height,
+                                            d->terrain_height_format, d->cpu_heightmap_bytes))
+        return false;
+
+    out->width = d->terrain_width;
+    out->height = d->terrain_height;
+    Q_strlcpy(out->height_format, d->terrain_height_format, sizeof(out->height_format));
+    out->scale_xy = d->terrain_scale_xy;
+    out->scale_z = d->terrain_scale_z;
+    VectorCopy(d->terrain_origin, out->origin);
+    out->pixels = d->cpu_heightmap;
+    out->pixel_bytes = d->cpu_heightmap_bytes;
+    return true;
+}
+
+bool Terrain_SampleHeight(float world_x, float world_y, float *out_z)
+{
+    if (!out_z)
+        return false;
+    terrain_heightfield_cpu_t hf;
+    if (!Terrain_Internal_GetActiveHeightfield(&hf))
+        return false;
+    return TerrainHeightmap_SampleHeight(&hf, world_x, world_y, out_z);
+}
+
+bool Terrain_SampleNormal(float world_x, float world_y, vec3_t out_normal)
+{
+    terrain_heightfield_cpu_t hf;
+    if (!Terrain_Internal_GetActiveHeightfield(&hf))
+        return false;
+    return TerrainHeightmap_SampleNormal(&hf, world_x, world_y, out_normal);
+}
+
+#endif /* QUASIMODO_TERRAIN */
 
 cvar_t *terrain_enable;
 cvar_t *terrain_collision;
@@ -93,6 +155,9 @@ static void Terrain_Cmd_Load_f(void)
 
     Q_strlcpy(terrain_last_jungle_vfs, vfs, sizeof terrain_last_jungle_vfs);
     terrain_loaded = true;
+#if QUASIMODO_TERRAIN
+    terrain_try_load_seam_meshes();
+#endif
     Com_Printf("[TERRAIN] loaded \"%s\"\n", vfs);
 }
 
@@ -141,6 +206,9 @@ static void Terrain_Cmd_Reload_f(void)
 
     Q_strlcpy(terrain_last_jungle_vfs, saved, sizeof terrain_last_jungle_vfs);
     terrain_loaded = true;
+#if QUASIMODO_TERRAIN
+    terrain_try_load_seam_meshes();
+#endif
     Com_Printf("[TERRAIN] reloaded \"%s\"\n", saved);
 }
 
@@ -164,11 +232,64 @@ static void Terrain_Cmd_Probe_f(void)
         Com_Printf("[TERRAIN] terrain system not initialized\n");
         return;
     }
-    if (!Terrain_IsSubsystemEnabled()) {
-        Com_Printf("[TERRAIN] terrain_enable is 0\n");
-        return;
+
+    Com_Printf("[TERRAIN] --- terrain_probe ---\n");
+    Com_Printf("[TERRAIN] loaded: %s\n", terrain_loaded ? "yes" : "no");
+    Com_Printf("[TERRAIN] terrain_enable: %d\n", Terrain_IsSubsystemEnabled() ? 1 : 0);
+    Com_Printf("[TERRAIN] terrain_collision: %d\n", Terrain_IsCollisionEnabled() ? 1 : 0);
+    Com_Printf("[TERRAIN] terrain_water cvar: %d\n", terrain_water && terrain_water->integer ? 1 : 0);
+
+    if (terrain_last_jungle_vfs[0])
+        Com_Printf("[TERRAIN] last jungle path: %s\n", terrain_last_jungle_vfs);
+    else
+        Com_Printf("[TERRAIN] last jungle path: (none)\n");
+
+#if QUASIMODO_TERRAIN
+    const jungle_document_t *d = TerrainJungle_GetLoaded();
+    if (d) {
+        static const char *modes[] = { "terrain_only", "bsp_terrain", "bsp_only" };
+        const int mi = (int)d->mode;
+        if (mi >= 0 && mi < 3)
+            Com_Printf("[TERRAIN] jungle mode: %s\n", modes[mi]);
+        else
+            Com_Printf("[TERRAIN] jungle mode: unknown (%d)\n", mi);
+        Com_Printf("[TERRAIN] water (parsed jungle): enabled=%d level=%.3f\n",
+                   d->water_enabled ? 1 : 0, d->water_level);
+        Com_Printf("[TERRAIN] seam patch refs: %d\n", d->seam_patch_paths_count);
+    } else {
+        Com_Printf("[TERRAIN] jungle document: (not resident)\n");
     }
-    Com_Printf("[TERRAIN] terrain_probe (placeholder Phase 2)\n");
+
+    if (!Terrain_IsSubsystemEnabled()) {
+        Com_Printf("[TERRAIN] sampling skipped (terrain_enable is 0)\n");
+    } else if (d && d->cpu_heightmap && d->terrain_width >= 2 && d->terrain_height >= 2
+               && d->terrain_scale_xy > 0.f) {
+        const float cx = d->terrain_origin[0]
+            + 0.5f * (float)(d->terrain_width - 1) * d->terrain_scale_xy;
+        const float cy = d->terrain_origin[1]
+            + 0.5f * (float)(d->terrain_height - 1) * d->terrain_scale_xy;
+        float z = 0.f;
+        vec3_t n;
+
+        Com_Printf("[TERRAIN] probe sample position (heightfield center XY): %.3f %.3f\n", cx, cy);
+
+        if (Terrain_SampleHeight(cx, cy, &z))
+            Com_Printf("[TERRAIN] sample height: %.3f\n", z);
+        else
+            Com_Printf("[TERRAIN] sample height: (out of bounds or unavailable)\n");
+
+        if (Terrain_SampleNormal(cx, cy, n))
+            Com_Printf("[TERRAIN] sample normal: %.5f %.5f %.5f\n", n[0], n[1], n[2]);
+        else
+            Com_Printf("[TERRAIN] sample normal: (unavailable)\n");
+    } else {
+        Com_Printf("[TERRAIN] height sampling: (no CPU heightfield)\n");
+    }
+#else
+    Com_Printf("[TERRAIN] Phase 3 probe detail requires QUASIMODO_TERRAIN build\n");
+#endif
+
+    Com_Printf("[TERRAIN] camera/world probe from player view: deferred (no client hook in Phase 3)\n");
 }
 
 static void Terrain_Cmd_DumpChunks_f(void)
@@ -280,11 +401,17 @@ bool Terrain_LoadJungle(const char *mapname)
 
     Q_strlcpy(terrain_last_jungle_vfs, path, sizeof terrain_last_jungle_vfs);
     terrain_loaded = true;
+#if QUASIMODO_TERRAIN
+    terrain_try_load_seam_meshes();
+#endif
     return true;
 }
 
 void Terrain_Unload(void)
 {
+#if QUASIMODO_TERRAIN
+    TerrainSeam_FreeAll();
+#endif
     TerrainJungle_UnloadAll();
     terrain_loaded = false;
     Terrain_ClearLastPath();
