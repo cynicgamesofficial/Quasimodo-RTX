@@ -142,9 +142,15 @@ void TerrainDebug_PrintInfo(void);
 void TerrainDebug_DumpChunks(void);
 void TerrainDebug_ProbeExtra(float world_x, float world_y);
 
+bool Terrain_Debug_IsSubsystemRegistered(void);
+const char *Terrain_Debug_GetLastJunglePath(void);
+bool Terrain_Debug_TryGetClientViewXY(float *out_x, float *out_y);
+
 void TerrainRender_DebugAppendInfo(void);
 /* Phase 8B: optional splat probe line when CPU splat exists */
 void TerrainRender_DebugProbeSplatWorld(float world_x, float world_y);
+/* True if this chunk index has a valid RTX BLAS after the last GPU upload. */
+bool TerrainRender_ChunkBlasValid(int chunk_flat_index);
 void Terrain_InstanceBLAS_Vk(void);
 
 void Terrain_RunDeferredGpuUploadIfAny(void);

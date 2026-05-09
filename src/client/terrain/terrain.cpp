@@ -14,6 +14,7 @@ extern "C" {
 
 #include <string.h>
 
+
 extern bool TerrainJungle_LoadFromVFS(const char *vfs_path, char *errbuf, size_t errbuf_sz);
 extern void TerrainJungle_UnloadAll(void);
 extern void TerrainJungle_PrintLoaded(void);
@@ -141,6 +142,40 @@ static void Terrain_ClearLastPath(void)
     terrain_last_jungle_vfs[0] = '\0';
 }
 
+#if QUASIMODO_TERRAIN
+bool Terrain_Debug_IsSubsystemRegistered(void)
+{
+    return terrain_registered;
+}
+
+const char *Terrain_Debug_GetLastJunglePath(void)
+{
+    return terrain_last_jungle_vfs;
+}
+
+/*
+ * Reject Windows drive letters, UNC, and absolute POSIX-/Win-root paths so terrain_load stays VFS-relative.
+ */
+static bool terrain_path_is_rejected_absolute(const char *p)
+{
+    if (!p || !p[0])
+        return true;
+    if (p[0] == '/' || p[0] == '\\')
+        return true;
+    if (p[0] == '\\' && p[1] == '\\')
+        return true;
+    if (((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && (p[2] == '/' || p[2] == '\\' || p[2] == '\0'))
+        return true;
+    return false;
+}
+
+static void terrain_refresh_gpu_after_cpu_change(const char *ctx_tag)
+{
+    Terrain_BuildBLAS();
+    Com_Printf("[TERRAIN] %s: GPU positions/BLAS upload issued (includes water plane when enabled)\n", ctx_tag);
+}
+#endif /* QUASIMODO_TERRAIN */
+
 static void Terrain_Cmd_Load_f(void)
 {
     if (!terrain_registered) {
@@ -157,6 +192,10 @@ static void Terrain_Cmd_Load_f(void)
         Com_Printf("[TERRAIN] usage: terrain_load <mapname | path/to/file.jungle>\n");
         return;
     }
+#if QUASIMODO_TERRAIN
+    if (Cmd_Argc() > 2)
+        Com_Printf("[TERRAIN] terrain_load: extra arguments ignored\n");
+#endif
 
     char vfs[MAX_OSPATH];
     if (strstr(arg, ".jungle")) {
@@ -164,6 +203,14 @@ static void Terrain_Cmd_Load_f(void)
     } else {
         Terrain_BuildMapsJunglePath(arg, vfs, sizeof vfs);
     }
+
+#if QUASIMODO_TERRAIN
+    if (terrain_path_is_rejected_absolute(vfs)) {
+        Com_Printf("[TERRAIN] terrain_load: rejected non-VFS path (use repository-relative path under baseq2; "
+                   "absolute paths disallowed)\n");
+        return;
+    }
+#endif
 
     char err[512];
     TerrainJungle_UnloadAll();
@@ -184,6 +231,7 @@ static void Terrain_Cmd_Load_f(void)
     terrain_try_load_seam_meshes();
     terrain_phase4_refresh_chunks();
     TerrainWater_OnMapLoadedVk(NULL);
+    terrain_refresh_gpu_after_cpu_change("terrain_load");
 #endif
     Com_Printf("[TERRAIN] loaded \"%s\"\n", vfs);
 }
@@ -194,12 +242,8 @@ static void Terrain_Cmd_Unload_f(void)
         Com_Printf("[TERRAIN] terrain system not initialized\n");
         return;
     }
-    if (!Terrain_IsSubsystemEnabled()) {
-        Com_Printf("[TERRAIN] terrain_enable is 0\n");
-        return;
-    }
     Terrain_Unload();
-    Com_Printf("[TERRAIN] unloaded\n");
+    Com_Printf("[TERRAIN] unloaded (CPU jungle cleared; GPU terrain freed when Vulkan terrain was active)\n");
 }
 
 static void Terrain_Cmd_Reload_f(void)
@@ -240,6 +284,7 @@ static void Terrain_Cmd_Reload_f(void)
     terrain_try_load_seam_meshes();
     terrain_phase4_refresh_chunks();
     TerrainWater_OnMapLoadedVk(NULL);
+    terrain_refresh_gpu_after_cpu_change("terrain_reload");
 #endif
     Com_Printf("[TERRAIN] reloaded \"%s\"\n", saved);
 }
@@ -270,11 +315,14 @@ static void Terrain_Cmd_Probe_f(void)
     }
 
     Com_Printf("[TERRAIN] --- terrain_probe ---\n");
+    Com_Printf("[TERRAIN] subsystem registered: %s\n", Terrain_Debug_IsSubsystemRegistered() ? "yes" : "no");
     Com_Printf("[TERRAIN] loaded: %s\n", terrain_loaded ? "yes" : "no");
     Com_Printf("[TERRAIN] terrain_enable: %d\n", Terrain_IsSubsystemEnabled() ? 1 : 0);
     Com_Printf("[TERRAIN] terrain_collision: %d\n", Terrain_IsCollisionEnabled() ? 1 : 0);
-    Com_Printf("[TERRAIN] collision: ray/triangle along hull bottom + ground-support if parallel miss; "
-               "no full OBB/wall clip; q2rtxded has no terrain merge\n");
+    Com_Printf("[TERRAIN] collision mode: hull-bottom heightfield + footprint support (no full OBB walls)\n");
+#if QUASIMODO_TERRAIN
+    Com_Printf("[TERRAIN] dedicated process (COM_DEDICATED): %d\n", COM_DEDICATED ? 1 : 0);
+#endif
     Com_Printf("[TERRAIN] terrain_water cvar: %d\n", terrain_water && terrain_water->integer ? 1 : 0);
 
     if (terrain_last_jungle_vfs[0])
@@ -291,45 +339,76 @@ static void Terrain_Cmd_Probe_f(void)
             Com_Printf("[TERRAIN] jungle mode: %s\n", modes[mi]);
         else
             Com_Printf("[TERRAIN] jungle mode: unknown (%d)\n", mi);
-        Com_Printf("[TERRAIN] water (parsed jungle): enabled=%d level=%.3f\n",
-                   d->water_enabled ? 1 : 0, d->water_level);
+        Com_Printf("[TERRAIN] water (jungle): enabled=%d level=%.3f\n", d->water_enabled ? 1 : 0, d->water_level);
         Com_Printf("[TERRAIN] seam patch refs: %d\n", d->seam_patch_paths_count);
     } else {
         Com_Printf("[TERRAIN] jungle document: (not resident)\n");
     }
 
+    float px = 0.f, py = 0.f;
+    bool have_xy = false;
+    if (Terrain_Debug_TryGetClientViewXY(&px, &py)) {
+        have_xy = true;
+        Com_Printf("[TERRAIN] probe XY source: cl.refdef.vieworg (active client view)\n");
+    }
+    if (!have_xy && d && d->cpu_heightmap && d->terrain_width >= 2 && d->terrain_height >= 2 && d->terrain_scale_xy > 0.f) {
+        px = d->terrain_origin[0] + 0.5f * (float)(d->terrain_width - 1) * d->terrain_scale_xy;
+        py = d->terrain_origin[1] + 0.5f * (float)(d->terrain_height - 1) * d->terrain_scale_xy;
+        have_xy = true;
+        Com_Printf("[TERRAIN] probe XY source: heightfield center (fallback - no reliable active view position)\n");
+    }
+
     if (!Terrain_IsSubsystemEnabled()) {
         Com_Printf("[TERRAIN] sampling skipped (terrain_enable is 0)\n");
-    } else if (d && d->cpu_heightmap && d->terrain_width >= 2 && d->terrain_height >= 2
-               && d->terrain_scale_xy > 0.f) {
-        const float cx = d->terrain_origin[0]
-            + 0.5f * (float)(d->terrain_width - 1) * d->terrain_scale_xy;
-        const float cy = d->terrain_origin[1]
-            + 0.5f * (float)(d->terrain_height - 1) * d->terrain_scale_xy;
+    } else if (!have_xy) {
+        Com_Printf("[TERRAIN] probe: no sample XY (no heightfield fallback)\n");
+    } else {
+        Com_Printf("[TERRAIN] probe world XY: %.3f %.3f\n", px, py);
+
+        terrain_heightfield_cpu_t hf;
+        bool in_bounds = false;
+        if (Terrain_Internal_GetActiveHeightfield(&hf)) {
+            const float gx = (px - hf.origin[0]) / hf.scale_xy;
+            const float gy = (py - hf.origin[1]) / hf.scale_xy;
+            if (gx >= 0.f && gy >= 0.f && gx <= (float)(hf.width - 1) && gy <= (float)(hf.height - 1))
+                in_bounds = true;
+            Com_Printf("[TERRAIN] heightfield bounds (XY): %s\n", in_bounds ? "inside" : "outside");
+        } else {
+            Com_Printf("[TERRAIN] heightfield bounds (XY): unknown (no active CPU heightfield)\n");
+        }
+
         float z = 0.f;
         vec3_t n;
-
-        Com_Printf("[TERRAIN] probe sample position (heightfield center XY): %.3f %.3f\n", cx, cy);
-
-        if (Terrain_SampleHeight(cx, cy, &z))
-            Com_Printf("[TERRAIN] sample height: %.3f\n", z);
+        const bool hz = Terrain_SampleHeight(px, py, &z);
+        if (hz)
+            Com_Printf("[TERRAIN] terrain height at XY: %.3f\n", z);
         else
-            Com_Printf("[TERRAIN] sample height: (out of bounds or unavailable)\n");
+            Com_Printf("[TERRAIN] terrain height at XY: (out of bounds or unavailable)\n");
 
-        if (Terrain_SampleNormal(cx, cy, n))
-            Com_Printf("[TERRAIN] sample normal: %.5f %.5f %.5f\n", n[0], n[1], n[2]);
+        if (Terrain_SampleNormal(px, py, n))
+            Com_Printf("[TERRAIN] terrain normal: %.5f %.5f %.5f\n", n[0], n[1], n[2]);
         else
-            Com_Printf("[TERRAIN] sample normal: (unavailable)\n");
+            Com_Printf("[TERRAIN] terrain normal: (unavailable)\n");
 
-        TerrainDebug_ProbeExtra(cx, cy);
-    } else {
-        Com_Printf("[TERRAIN] height sampling: (no CPU heightfield)\n");
+        if (terrain_water && terrain_water->integer && hz) {
+            vec3_t pw;
+            pw[0] = px;
+            pw[1] = py;
+            pw[2] = z;
+            const bool under = TerrainWater_IsUnderwater(pw);
+            Com_Printf("[TERRAIN] water test (TerrainWater_IsUnderwater @ sampled Z): %s\n",
+                       under ? "under plane (relative to water.level)" : "over / inactive");
+        } else if (terrain_water && terrain_water->integer && !hz) {
+            Com_Printf("[TERRAIN] water test: skipped (no terrain height sample at XY)\n");
+        }
+
+        Com_Printf("[TERRAIN] point contents (terrain): deferred (returns 0 in builds)\n");
+
+        TerrainDebug_ProbeExtra(px, py);
     }
 #else
-    Com_Printf("[TERRAIN] Phase 3 probe detail requires QUASIMODO_TERRAIN build\n");
+    Com_Printf("[TERRAIN] probe detail requires QUASIMODO_TERRAIN build\n");
 #endif
-
-    Com_Printf("[TERRAIN] camera/world probe from player view: deferred (no client hook in Phase 3)\n");
 }
 
 static void Terrain_Cmd_DumpChunks_f(void)
@@ -356,12 +435,17 @@ static void Terrain_Cmd_Rebuild_f(void)
         return;
     }
     if (!Terrain_IsSubsystemEnabled()) {
-        Com_Printf("[TERRAIN] terrain_enable is 0\n");
+        Com_Printf("[TERRAIN] terrain_rebuild: no-op (terrain_enable is 0)\n");
         return;
     }
 #if QUASIMODO_TERRAIN
+    if (!Terrain_IsLoaded()) {
+        Com_Printf("[TERRAIN] terrain_rebuild: no-op (no .jungle loaded)\n");
+        return;
+    }
     terrain_phase4_refresh_chunks();
-    Com_Printf("[TERRAIN] terrain_rebuild: chunk grid refreshed\n");
+    terrain_refresh_gpu_after_cpu_change("terrain_rebuild");
+    Com_Printf("[TERRAIN] terrain_rebuild: CPU chunk/LOD state rebuilt\n");
 #else
     Com_Printf("[TERRAIN] terrain_rebuild requires QUASIMODO_TERRAIN build\n");
 #endif
@@ -471,7 +555,7 @@ bool Terrain_LoadJungle(const char *mapname)
 void Terrain_Unload(void)
 {
 #if QUASIMODO_TERRAIN
-    TerrainWater_OnMapUnloadVk();
+    Terrain_OnMapUnload_Vk();
     TerrainChunks_Free();
     TerrainSeam_FreeAll();
 #endif

@@ -916,6 +916,18 @@ void Terrain_InstanceBLAS_Vk(void)
     s_last_terrain_tlas_instances = submitted;
 }
 
+bool TerrainRender_ChunkBlasValid(int chunk_flat_index)
+{
+    if (!s_terrain_vk_ready)
+        return false;
+    if (!terrain_enable || !terrain_enable->integer)
+        return false;
+    if (!s_chunk_geoms || chunk_flat_index < 0 || chunk_flat_index >= s_chunk_geom_slots)
+        return false;
+    return s_chunk_geoms[chunk_flat_index].accel != VK_NULL_HANDLE &&
+           s_chunk_geoms[chunk_flat_index].blas_device_address != (VkDeviceAddress)0;
+}
+
 void TerrainRender_DebugAppendInfo(void)
 {
     Com_Printf("[TERRAIN] vk terrain ready: %s\n", s_terrain_vk_ready ? "yes" : "no");
