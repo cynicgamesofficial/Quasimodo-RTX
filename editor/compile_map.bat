@@ -1,13 +1,17 @@
 @echo off
 :: ============================================================
 :: Quake 2 Map Compiler
-:: Place this .bat in the same folder as q2tool.exe
+:: Place this .bat in the editor\ folder next to q2tool.exe
 :: Drag and drop your .map file onto this .bat to compile
 :: ============================================================
 
-:: Tool lives next to this bat
+:: Tool dir = folder this .bat lives in
 set TOOLDIR=%~dp0
 set TOOLDIR=%TOOLDIR:~0,-1%
+
+:: Engine root = one level up from editor\
+set GAMEDIR=%TOOLDIR%\..
+set BASEDIR=%TOOLDIR%\..\baseq2
 
 set MAPFILE=%~1
 set MAPNAME=%~n1
@@ -41,7 +45,7 @@ if errorlevel 1 goto error
 :: --- RAD ---
 echo.
 echo  [3/3] Running RAD...
-"%TOOLDIR%\q2tool" -rad -extra -bounce 4 "%MAPDIR%%MAPNAME%.bsp"
+"%TOOLDIR%\q2tool" -rad -extra -bounce 4 -gamedir "%GAMEDIR%" -basedir "%BASEDIR%" "%MAPDIR%%MAPNAME%.bsp"
 if errorlevel 1 goto error
 
 echo.

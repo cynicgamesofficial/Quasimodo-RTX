@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "format": "jungle",
+  "mode": "bsp_terrain",
+  "world": {
+    "bsp": "maps/jungletest_small.bsp"
+  },
+  "terrain": {
+    "heightmap": "terrain/test_flat/height.raw",
+    "width": 65,
+    "height": 65,
+    "height_format": "uint16_le",
+    "scale_xy": 256,
+    "scale_z": 48,
+    "origin": [
+      -8192,
+      -8192,
+      52
+    ],
+    "chunk_size": 16,
+    "lod_count": 3,
+    "lod_morph": false,
+    "splatmap": "terrain/test_flat/splat.png",
+    "materials": [
+      "textures/e1u1/floor3_2.wal",
+      "textures/e1u1/floor3_1.wal",
+      "textures/e1u1/floor1_3.wal"
+    ]
+  },
+  "water": {
+    "enabled": true,
+    "level": -96,
+    "color": [
+      0.18,
+      0.32,
+      0.42,
+      1.0
+    ],
+    "roughness": 0.12,
+    "refraction_strength": 0.06,
+    "reflection_mode": "none",
+    "rtx_reflection_hook": false
+  }
+}
