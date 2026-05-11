@@ -56,6 +56,11 @@ static const float TERRAIN_SUPPORT_EPS_Z = 2.0f;
 static const float TERRAIN_PENETRATE_EPS_Z = 4.0f;
 /* Synthetic hits must use fraction strictly < 1 so CL_Trace assigns world ent for PM_CategorizePosition. */
 static const float TERRAIN_SUPPORT_SYNTH_FRAC = 1.0f - 1.0f / 8192.0f;
+/*
+ * Do not emit synthetic ground when the hull origin sweep is moving upward (jump / slide ascent).
+ * PM_StepSlideMove uses the same trace path as walking; BSP allows leaving ground on upward moves.
+ */
+static const float TERRAIN_SUPPORT_MAX_UP_DZ = 0.125f;
 
 static void trace_clear_miss(trace_t *tr)
 {
@@ -282,11 +287,51 @@ static bool terrain_footprint_supported_at_end(const terrain_heightfield_cpu_t *
     return true;
 }
 
+/*
+ * Stricter than terrain_footprint_supported_at_end: hull bottom clearly above the highest terrain sample
+ * under the footprint. Ground glue uses TERRAIN_SUPPORT_EPS_Z (looser); merge uses this so running jumps
+ * (large horizontal step, modest dz) still skip hull snags while uphill slides remain on-surface (bz ~ tmax).
+ */
+static const float TERRAIN_MERGE_AIRBORNE_EPS_Z = 1.0f;
+
+static bool terrain_merge_endpos_airborne_above_mesh(const terrain_heightfield_cpu_t *hf,
+                                                     const vec3_t origin_end,
+                                                     const vec3_t mins, const vec3_t maxs)
+{
+    if (!hf)
+        return false;
+
+    vec2_t offs[5];
+    terrain_hull_footprint_xy_offs(mins, maxs, offs);
+
+    float tmax = -FLT_MAX;
+    int samples = 0;
+    for (int i = 0; i < 5; i++) {
+        const float wx = origin_end[0] + offs[i][0];
+        const float wy = origin_end[1] + offs[i][1];
+        float tz;
+        if (!TerrainHeightmap_SampleHeight(hf, wx, wy, &tz))
+            continue;
+        samples++;
+        if (tz > tmax)
+            tmax = tz;
+    }
+    if (!samples)
+        return false;
+
+    const float bz = origin_end[2] + mins[2];
+    return bz > tmax + TERRAIN_MERGE_AIRBORNE_EPS_Z;
+}
+
 static bool terrain_try_synthetic_floor_trace(const terrain_heightfield_cpu_t *hf,
                                               const vec3_t origin_start, const vec3_t origin_end,
                                               const vec3_t mins, const vec3_t maxs, trace_t *out_tr)
 {
     if (!hf || !out_tr)
+        return false;
+
+    const float dz = origin_end[2] - origin_start[2];
+    if (dz > TERRAIN_SUPPORT_MAX_UP_DZ)
         return false;
 
     if (!terrain_footprint_supported_at_end(hf, origin_end, mins, maxs))
@@ -429,6 +474,34 @@ extern "C" void Terrain_MergeWorldTrace(trace_t *dst, const vec3_t start, const 
     /* Keep BSP stuck-in-solid behavior authoritative; do not replace with terrain hits. */
     if (dst->allsolid || dst->startsolid)
         return;
+
+    /*
+     * Jump / vertical lift: hull triangle hits still merge here and clip velocity against terrain under the feet.
+     * BSP sees clear air (fraction 1) but terrain rays can still register immediate hits — sticky floor.
+     * (1) Standing hop: dz >> dh — ratio gate.
+     * (2) Run + jump: dz may be smaller than dh per trace; ratio fails — use endpos clearly above local mesh
+     *     (feet not hugging tmax) so uphill slides still merge while airborne arcs skip.
+     */
+    {
+        const float dz = end[2] - start[2];
+        if (dz > TERRAIN_SUPPORT_MAX_UP_DZ) {
+            const float dx = end[0] - start[0];
+            const float dy = end[1] - start[1];
+            const float dh_sq = dx * dx + dy * dy;
+            const float dh = dh_sq > 0.f ? sqrtf(dh_sq) : 0.f;
+            static const float k_vert_dominates_horiz = 1.25f;
+            if (dz > dh * k_vert_dominates_horiz) {
+                terrain_merge_debug_log("skip_jump_ascent", dst, 1.f, false);
+                return;
+            }
+            terrain_heightfield_cpu_t hf;
+            if (Terrain_Internal_GetActiveHeightfield(&hf) &&
+                terrain_merge_endpos_airborne_above_mesh(&hf, end, mins, maxs)) {
+                terrain_merge_debug_log("skip_jump_airborne_end", dst, 1.f, false);
+                return;
+            }
+        }
+    }
 
     trace_t ter;
 
