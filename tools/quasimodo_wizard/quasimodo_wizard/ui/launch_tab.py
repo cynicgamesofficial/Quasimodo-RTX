@@ -1,5 +1,20 @@
 """
 Launch tab — run ``q2rtx.exe`` with common +set options and presets (no gameplay logic).
+
+Engine cvar audit (read-only; names from ``src/refresh/vkpt/main.c``, ``src/client/refresh.c``,
+``src/client/ui_rmlui.cpp``, ``baseq2/ui/settings/settings_data.h`` / ``q2rtx.menu``):
+
+- ``vid_geometry`` — ``WxH`` (and optional ``+x+y``); primary resolution control (not ``vid_width`` / ``vid_height``).
+- ``vid_fullscreen`` — ``0`` windowed, ``1`` fullscreen.
+- ``vid_vsync`` — optional vsync (SDL / GL path); included as optional display extra.
+- ``pt_dlss``, ``pt_dlss_quality`` — DLSS toggle and quality (0 quality … 4 DLAA per shipped UI docs).
+- ``pt_restir_di`` — ReSTIR DI (0 legacy, 1 ReSTIR).
+- ``flt_enable`` — master denoiser / SVGF reconstruction toggle.
+- ``pt_nrd`` — ReSTIR denoiser choice (0 ASVGF, 1 NRD); engine gates NRD with ReSTIR (``main.c``).
+- ``ui_rmlui``, ``ui_splash`` — RmlUi vs legacy UI; splash screen.
+
+No dedicated ``vid_refreshrate`` / ``vid_displayfrequency`` cvar was found in this repo audit; refresh UI is
+informational unless the user sets a matching cvar via Advanced.
 """
 from __future__ import annotations
 
@@ -9,7 +24,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
@@ -37,6 +52,28 @@ from repo_paths import (
     repository_root,
 )
 
+# --- Engine cvar names (do not rename without re-auditing engine) ---
+CVAR_VID_GEOMETRY = "vid_geometry"
+CVAR_VID_FULLSCREEN = "vid_fullscreen"
+CVAR_VID_VSYNC = "vid_vsync"
+CVAR_PT_DLSS = "pt_dlss"
+CVAR_PT_DLSS_QUALITY = "pt_dlss_quality"
+CVAR_PT_RESTIR_DI = "pt_restir_di"
+CVAR_FLT_ENABLE = "flt_enable"
+CVAR_PT_NRD = "pt_nrd"
+CVAR_UI_RMLUI = "ui_rmlui"
+CVAR_UI_SPLASH = "ui_splash"
+
+ASPECT_RESOLUTIONS: Dict[str, List[str]] = {
+    "16:9": ["1280x720", "1600x900", "1920x1080", "2560x1440", "3200x1800", "3840x2160"],
+    "16:10": ["1280x800", "1440x900", "1680x1050", "1920x1200", "2560x1600", "3840x2400"],
+    "21:9": ["2560x1080", "3440x1440", "3840x1600", "5120x2160"],
+    "4:3": ["1024x768", "1280x960", "1600x1200", "2048x1536"],
+    "5:4": ["1280x1024", "2560x2048"],
+}
+
+REFRESH_OPTIONS = ["Default", "60", "75", "90", "120", "144", "165", "240"]
+
 
 def _safe_folder_open(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
@@ -44,6 +81,13 @@ def _safe_folder_open(path: Path) -> None:
         os.startfile(path)  # nosec: trusted user action opening repo-relative folder
     else:
         subprocess.Popen(["xdg-open", str(path)])  # nosec
+
+
+def _parse_wh(res: str) -> Optional[Tuple[int, int]]:
+    m = re.match(r"^(\d+)x(\d+)$", res.strip(), re.I)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
 
 
 class LaunchTab(QWidget):
@@ -85,34 +129,103 @@ class LaunchTab(QWidget):
         ml.addRow("Manual map name:", self.map_manual)
         root.addWidget(mapg)
 
-        vid = QGroupBox("Video")
-        vl = QFormLayout(vid)
-        self.res_preset = QComboBox()
-        self.res_preset.addItems(["1280x720", "1920x1080", "2560x1440", "3840x2160", "Custom"])
-        self.res_preset.setCurrentText("1920x1080")
-        self.res_preset.currentTextChanged.connect(self._on_preset_resolution)
+        disp = QGroupBox("Display")
+        dl = QFormLayout(disp)
+        self.aspect_combo = QComboBox()
+        self.aspect_combo.addItems(list(ASPECT_RESOLUTIONS.keys()) + ["Custom"])
+        self.aspect_combo.setCurrentText("16:9")
+        self.aspect_combo.currentTextChanged.connect(self._on_aspect_changed)
+        self.res_combo = QComboBox()
+        self.res_combo.currentTextChanged.connect(self._on_resolution_combo_changed)
         self.w_spin = QSpinBox()
-        self.w_spin.setRange(640, 16384)
-        self.w_spin.setValue(1920)
+        self.w_spin.setRange(320, 8192)
         self.h_spin = QSpinBox()
-        self.h_spin.setRange(480, 16384)
-        self.h_spin.setValue(1080)
-        self.w_spin.valueChanged.connect(self._update_preview)
-        self.h_spin.valueChanged.connect(self._update_preview)
+        self.h_spin.setRange(240, 8192)
+        self.w_spin.valueChanged.connect(self._on_manual_res_changed)
+        self.h_spin.valueChanged.connect(self._on_manual_res_changed)
         self.fullscreen = QComboBox()
         self.fullscreen.addItems(["Windowed (vid_fullscreen 0)", "Fullscreen (1)"])
         self.fullscreen.currentIndexChanged.connect(self._update_preview)
-        vl.addRow("Resolution preset:", self.res_preset)
-        vl.addRow("Width:", self.w_spin)
-        vl.addRow("Height:", self.h_spin)
-        vl.addRow("Display mode:", self.fullscreen)
-        self.pt_dlss = QComboBox()
-        self.pt_dlss.addItems(["(default — omit)", "Off (+set pt_dlss 0)", "On (+set pt_dlss 1)"])
-        self.pt_dlss.currentIndexChanged.connect(self._update_preview)
-        vl.addRow("DLSS hint (pt_dlss):", self.pt_dlss)
-        root.addWidget(vid)
+        self.refresh_combo = QComboBox()
+        self.refresh_combo.addItems(REFRESH_OPTIONS)
+        self.refresh_combo.setToolTip(
+            "No dedicated refresh-rate cvar was found in this repository audit. "
+            "Selection is for your notes only unless you add a matching +set row in Advanced."
+        )
+        self.refresh_combo.currentTextChanged.connect(self._update_preview)
+        self.vsync_combo = QComboBox()
+        self.vsync_combo.addItems(["Default (omit vid_vsync)", "vid_vsync 0", "vid_vsync 1"])
+        self.vsync_combo.currentIndexChanged.connect(self._update_preview)
+        dl.addRow("Aspect ratio:", self.aspect_combo)
+        dl.addRow("Resolution:", self.res_combo)
+        dl.addRow("Width (Custom):", self.w_spin)
+        dl.addRow("Height (Custom):", self.h_spin)
+        dl.addRow("Display mode:", self.fullscreen)
+        dl.addRow("Refresh rate (informational):", self.refresh_combo)
+        dl.addRow("VSync:", self.vsync_combo)
+        root.addWidget(disp)
 
-        ter = QGroupBox("Terrain / RTX / UI")
+        dlss = QGroupBox("Upscaling / DLSS")
+        dssl = QFormLayout(dlss)
+        self.pt_dlss = QComboBox()
+        self.pt_dlss.addItems(["Default (omit pt_dlss)", "Off (+set pt_dlss 0)", "On (+set pt_dlss 1)"])
+        self.pt_dlss.currentIndexChanged.connect(self._on_dlss_changed)
+        self.pt_dlss_quality = QComboBox()
+        self.pt_dlss_quality.addItems(
+            [
+                "Default (omit pt_dlss_quality)",
+                "Quality (0)",
+                "Balanced (1)",
+                "Performance (2)",
+                "Ultra Performance (3)",
+                "DLAA (4)",
+            ]
+        )
+        self.pt_dlss_quality.setToolTip("pt_dlss_quality — only sent when DLSS is On.")
+        self.pt_dlss_quality.currentIndexChanged.connect(self._update_preview)
+        dssl.addRow("DLSS (pt_dlss):", self.pt_dlss)
+        dssl.addRow("DLSS mode (pt_dlss_quality):", self.pt_dlss_quality)
+        root.addWidget(dlss)
+
+        restir_g = QGroupBox("Lighting / ReSTIR")
+        rl = QFormLayout(restir_g)
+        self.pt_restir_di = QComboBox()
+        self.pt_restir_di.addItems(["Default (omit pt_restir_di)", "Off — legacy (+set pt_restir_di 0)", "On — ReSTIR (+set pt_restir_di 1)"])
+        self.pt_restir_di.currentIndexChanged.connect(self._on_restir_changed)
+        rl.addRow("ReSTIR DI (pt_restir_di):", self.pt_restir_di)
+        root.addWidget(restir_g)
+
+        den_g = QGroupBox("Denoiser")
+        denl = QFormLayout(den_g)
+        self.denoiser = QComboBox()
+        self.denoiser.addItems(
+            [
+                "Default (omit flt_enable / pt_nrd)",
+                "Off (+set flt_enable 0)",
+                "ASVGF — ReSTIR path (+set flt_enable 1; +set pt_nrd 0)",
+                "NRD — ReSTIR path (+set flt_enable 1; +set pt_nrd 1)",
+            ]
+        )
+        self.denoiser.setToolTip(
+            "Engine uses pt_nrd only with ReSTIR DI enabled. NRD is disabled in this profile when ReSTIR DI is Off."
+        )
+        self.denoiser.currentIndexChanged.connect(self._update_preview)
+        denl.addRow("Profile:", self.denoiser)
+        root.addWidget(den_g)
+
+        ui_g = QGroupBox("UI system")
+        uil = QFormLayout(ui_g)
+        self.ui_rmlui = QComboBox()
+        self.ui_rmlui.addItems(["Default (omit ui_rmlui)", "RmlUi modern (+set ui_rmlui 1)", "Legacy (+set ui_rmlui 0)"])
+        self.ui_rmlui.currentIndexChanged.connect(self._update_preview)
+        self.ui_splash = QCheckBox("Startup splash (+set ui_splash 1)")
+        self.ui_splash.setChecked(False)
+        self.ui_splash.stateChanged.connect(lambda *_: self._update_preview())
+        uil.addRow("UI:", self.ui_rmlui)
+        uil.addRow(self.ui_splash)
+        root.addWidget(ui_g)
+
+        ter = QGroupBox("Terrain / diagnostics")
         tl = QFormLayout(ter)
         self.terrain_enable = QCheckBox("terrain_enable 1")
         self.terrain_enable.setChecked(True)
@@ -122,10 +235,10 @@ class LaunchTab(QWidget):
         self.terrain_water.setChecked(True)
         self.terrain_rtx = QCheckBox("terrain_rtx_instance 1")
         self.terrain_rtx.setChecked(True)
-        self.jolt_compare = QCheckBox("terrain_collision_backend 1 (Jolt compare — diagnostic only)")
+        self.jolt_compare = QCheckBox(
+            "terrain_collision_backend 1 — Jolt compare diagnostics only; gameplay remains legacy collision."
+        )
         self.jolt_compare.setChecked(False)
-        self.ui_splash = QCheckBox("ui_splash 1 (splash on)")
-        self.ui_splash.setChecked(False)
         self.logfile = QCheckBox("logfile 2 + logfile_flush 1")
         self.logfile.setChecked(True)
         self.developer = QCheckBox("developer 1")
@@ -136,7 +249,6 @@ class LaunchTab(QWidget):
             self.terrain_water,
             self.terrain_rtx,
             self.jolt_compare,
-            self.ui_splash,
             self.logfile,
             self.developer,
         ):
@@ -146,7 +258,6 @@ class LaunchTab(QWidget):
         tl.addRow(self.terrain_water)
         tl.addRow(self.terrain_rtx)
         tl.addRow(self.jolt_compare)
-        tl.addRow(self.ui_splash)
         tl.addRow(self.logfile)
         tl.addRow(self.developer)
         root.addWidget(ter)
@@ -159,7 +270,7 @@ class LaunchTab(QWidget):
         root.addLayout(ded)
 
         pre = QGroupBox("Presets")
-        pr = QHBoxLayout(pre)
+        pr = QHBoxLayout()
         self.preset_combo = QComboBox()
         self.preset_combo.setEditable(False)
         self.preset_combo.currentTextChanged.connect(self._on_preset_selected)
@@ -191,11 +302,11 @@ class LaunchTab(QWidget):
         act.addWidget(self._btn_launch)
         root.addLayout(act)
 
-        root.addWidget(QLabel("Command preview (repo root is working directory):"))
+        root.addWidget(QLabel("Command preview (repo root is working directory). Core +sets first; Advanced rows only fill gaps:"))
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMaximumBlockCount(200)
-        self.preview.setMinimumHeight(100)
+        self.preview.setMinimumHeight(120)
         root.addWidget(self.preview)
 
         self._load_defaults()
@@ -204,7 +315,67 @@ class LaunchTab(QWidget):
             self.load_shipped_defaults_if_present()
         self._refresh_map_list()
         self._refresh_preset_list()
-        self._on_preset_resolution()
+        self._populate_res_combo()
+        self._sync_resolution_widgets()
+        self._on_dlss_changed()
+        self._on_restir_changed()
+        self._update_preview()
+
+    # --- Display wiring ---
+    def _on_aspect_changed(self, _t: str = "") -> None:
+        self._populate_res_combo()
+        self._sync_resolution_widgets()
+        self._update_preview()
+
+    def _populate_res_combo(self) -> None:
+        asp = self.aspect_combo.currentText()
+        self.res_combo.blockSignals(True)
+        self.res_combo.clear()
+        if asp == "Custom":
+            self.res_combo.addItem("(use width/height fields)")
+            self.res_combo.setEnabled(False)
+        else:
+            self.res_combo.setEnabled(True)
+            for r in ASPECT_RESOLUTIONS.get(asp, []):
+                self.res_combo.addItem(r)
+        self.res_combo.blockSignals(False)
+
+    def _sync_resolution_widgets(self) -> None:
+        custom = self.aspect_combo.currentText() == "Custom"
+        self.w_spin.setEnabled(custom)
+        self.h_spin.setEnabled(custom)
+        if not custom and self.res_combo.count() > 0:
+            wh = _parse_wh(self.res_combo.currentText())
+            if wh:
+                self.w_spin.blockSignals(True)
+                self.h_spin.blockSignals(True)
+                self.w_spin.setValue(wh[0])
+                self.h_spin.setValue(wh[1])
+                self.w_spin.blockSignals(False)
+                self.h_spin.blockSignals(False)
+
+    def _on_resolution_combo_changed(self, _t: str = "") -> None:
+        self._sync_resolution_widgets()
+        self._update_preview()
+
+    def _on_manual_res_changed(self) -> None:
+        if self.aspect_combo.currentText() == "Custom":
+            self._update_preview()
+
+    def _on_dlss_changed(self) -> None:
+        on = self.pt_dlss.currentIndex() == 2
+        self.pt_dlss_quality.setEnabled(on)
+        if not on:
+            self.pt_dlss_quality.setCurrentIndex(0)
+        self._update_preview()
+
+    def _on_restir_changed(self) -> None:
+        restir_on = self.pt_restir_di.currentIndex() == 2
+        # ASVGF/NRD ReSTIR profiles require ReSTIR DI (matches engine gating for pt_nrd).
+        if not restir_on and self.denoiser.currentIndex() in (2, 3):
+            self.denoiser.blockSignals(True)
+            self.denoiser.setCurrentIndex(0)
+            self.denoiser.blockSignals(False)
         self._update_preview()
 
     def _load_defaults(self) -> None:
@@ -275,14 +446,6 @@ class LaunchTab(QWidget):
                 self.map_combo.addItem(bsp.stem)
         self.map_combo.blockSignals(False)
 
-    def _on_preset_resolution(self) -> None:
-        t = self.res_preset.currentText()
-        m = re.match(r"^(\d+)x(\d+)$", t)
-        if m:
-            self.w_spin.setValue(int(m.group(1)))
-            self.h_spin.setValue(int(m.group(2)))
-        self._update_preview()
-
     def _selected_map(self) -> str:
         manual = self.map_manual.text().strip()
         if manual:
@@ -292,39 +455,82 @@ class LaunchTab(QWidget):
             return t
         return ""
 
-    def _append_sets(self, acc: List[str], name: str, value: str) -> None:
-        acc.extend(["+set", name, value])
+    def _geometry_string(self) -> str:
+        return f"{self.w_spin.value()}x{self.h_spin.value()}"
+
+    def _core_cvar_pairs(self) -> List[Tuple[str, str]]:
+        """Ordered (name, value) pairs from Launch tab controls only."""
+        out: List[Tuple[str, str]] = []
+        out.append((CVAR_VID_GEOMETRY, self._geometry_string()))
+        out.append((CVAR_VID_FULLSCREEN, str(self.fullscreen.currentIndex())))
+
+        vsi = self.vsync_combo.currentIndex()
+        if vsi == 1:
+            out.append((CVAR_VID_VSYNC, "0"))
+        elif vsi == 2:
+            out.append((CVAR_VID_VSYNC, "1"))
+
+        di = self.pt_dlss.currentIndex()
+        if di == 1:
+            out.append((CVAR_PT_DLSS, "0"))
+        elif di == 2:
+            out.append((CVAR_PT_DLSS, "1"))
+            qi = self.pt_dlss_quality.currentIndex()
+            if qi > 0:
+                out.append((CVAR_PT_DLSS_QUALITY, str(qi - 1)))
+
+        ri = self.pt_restir_di.currentIndex()
+        if ri == 1:
+            out.append((CVAR_PT_RESTIR_DI, "0"))
+        elif ri == 2:
+            out.append((CVAR_PT_RESTIR_DI, "1"))
+
+        den = self.denoiser.currentIndex()
+        restir_on = self.pt_restir_di.currentIndex() == 2
+        if den == 1:
+            out.append((CVAR_FLT_ENABLE, "0"))
+        elif den == 2 and restir_on:
+            out.append((CVAR_FLT_ENABLE, "1"))
+            out.append((CVAR_PT_NRD, "0"))
+        elif den == 3 and restir_on:
+            out.append((CVAR_FLT_ENABLE, "1"))
+            out.append((CVAR_PT_NRD, "1"))
+
+        ui = self.ui_rmlui.currentIndex()
+        if ui == 1:
+            out.append((CVAR_UI_RMLUI, "1"))
+        elif ui == 2:
+            out.append((CVAR_UI_RMLUI, "0"))
+        out.append((CVAR_UI_SPLASH, "1" if self.ui_splash.isChecked() else "0"))
+
+        out.append(("terrain_enable", "1" if self.terrain_enable.isChecked() else "0"))
+        out.append(("terrain_collision", "1" if self.terrain_collision.isChecked() else "0"))
+        out.append(("terrain_water", "1" if self.terrain_water.isChecked() else "0"))
+        out.append(("terrain_rtx_instance", "1" if self.terrain_rtx.isChecked() else "0"))
+        out.append(("terrain_collision_backend", "1" if self.jolt_compare.isChecked() else "0"))
+        if self.logfile.isChecked():
+            out.append(("logfile", "2"))
+            out.append(("logfile_flush", "1"))
+        out.append(("developer", "1" if self.developer.isChecked() else "0"))
+        out.append(("dedicated", "1" if self.dedicated.isChecked() else "0"))
+        return out
 
     def build_argv(self) -> List[str]:
         exe = self._resolve_exe()
         if not exe:
             return []
         args: List[str] = [str(exe)]
-        self._append_sets(args, "vid_width", str(self.w_spin.value()))
-        self._append_sets(args, "vid_height", str(self.h_spin.value()))
-        self._append_sets(args, "vid_fullscreen", str(self.fullscreen.currentIndex()))
-        idx = self.pt_dlss.currentIndex()
-        if idx == 1:
-            self._append_sets(args, "pt_dlss", "0")
-        elif idx == 2:
-            self._append_sets(args, "pt_dlss", "1")
-        self._append_sets(args, "terrain_enable", "1" if self.terrain_enable.isChecked() else "0")
-        self._append_sets(args, "terrain_collision", "1" if self.terrain_collision.isChecked() else "0")
-        self._append_sets(args, "terrain_water", "1" if self.terrain_water.isChecked() else "0")
-        self._append_sets(args, "terrain_rtx_instance", "1" if self.terrain_rtx.isChecked() else "0")
-        self._append_sets(args, "terrain_collision_backend", "1" if self.jolt_compare.isChecked() else "0")
-        self._append_sets(args, "ui_splash", "1" if self.ui_splash.isChecked() else "0")
-        if self.logfile.isChecked():
-            self._append_sets(args, "logfile", "2")
-            self._append_sets(args, "logfile_flush", "1")
-        self._append_sets(args, "developer", "1" if self.developer.isChecked() else "0")
-        if self.dedicated.isChecked():
-            self._append_sets(args, "dedicated", "1")
-        else:
-            self._append_sets(args, "dedicated", "0")
-        adv = self.main_window.advanced_tab.get_cvar_pairs()
-        for n, v in adv:
-            self._append_sets(args, n, v)
+
+        core_pairs = self._core_cvar_pairs()
+        seen = {n for n, _ in core_pairs}
+        for n, v in core_pairs:
+            args.extend(["+set", n, v])
+
+        for n, v in self.main_window.advanced_tab.get_cvar_pairs():
+            if n and n not in seen:
+                args.extend(["+set", n, v])
+                seen.add(n)
+
         m = self._selected_map()
         if m:
             args.append("+map")
@@ -341,7 +547,13 @@ class LaunchTab(QWidget):
                 parts.append('"' + a.replace('"', '\\"') + '"')
             else:
                 parts.append(a)
-        return " ".join(parts)
+        line = " ".join(parts)
+        if self.refresh_combo.currentText() not in ("", "Default"):
+            line += (
+                "\n; Note: refresh preset is not emitted (no audited refresh-rate cvar). "
+                "Add one via Advanced if needed."
+            )
+        return line
 
     def _update_preview(self) -> None:
         self.preview.setPlainText(self._preview_text())
@@ -408,7 +620,7 @@ class LaunchTab(QWidget):
         safe = re.sub(r"[^\w\-]+", "_", name)
         path = presets_dir() / f"{safe}.json"
         payload = {
-            "version": 1,
+            "version": 2,
             "launch": self._gather_launch_dict(),
             "advanced": self.main_window.advanced_tab.get_settings(),
         }
@@ -451,11 +663,18 @@ class LaunchTab(QWidget):
         return {
             "exe": self.exe_edit.text().strip(),
             "baseq2": self.baseq2_edit.text().strip(),
-            "resolution_preset": self.res_preset.currentText(),
+            "aspect_ratio": self.aspect_combo.currentText(),
+            "resolution_preset": self.res_combo.currentText(),
             "width": self.w_spin.value(),
             "height": self.h_spin.value(),
             "fullscreen_index": self.fullscreen.currentIndex(),
+            "refresh_preset": self.refresh_combo.currentText(),
+            "vsync_index": self.vsync_combo.currentIndex(),
             "pt_dlss_index": self.pt_dlss.currentIndex(),
+            "pt_dlss_quality_index": self.pt_dlss_quality.currentIndex(),
+            "pt_restir_di_index": self.pt_restir_di.currentIndex(),
+            "denoiser_index": self.denoiser.currentIndex(),
+            "ui_rmlui_index": self.ui_rmlui.currentIndex(),
             "terrain_enable": self.terrain_enable.isChecked(),
             "terrain_collision": self.terrain_collision.isChecked(),
             "terrain_water": self.terrain_water.isChecked(),
@@ -474,18 +693,54 @@ class LaunchTab(QWidget):
             self.exe_edit.setText(str(d["exe"]))
         if "baseq2" in d:
             self.baseq2_edit.setText(str(d["baseq2"]))
-        if "resolution_preset" in d:
-            i = self.res_preset.findText(str(d["resolution_preset"]))
+
+        if "aspect_ratio" in d:
+            t = str(d["aspect_ratio"])
+            i = self.aspect_combo.findText(t)
             if i >= 0:
-                self.res_preset.setCurrentIndex(i)
+                self.aspect_combo.setCurrentIndex(i)
+        self._populate_res_combo()
+
+        if "resolution_preset" in d:
+            t = str(d["resolution_preset"])
+            i = self.res_combo.findText(t)
+            if i >= 0:
+                self.res_combo.setCurrentIndex(i)
+
         if "width" in d:
             self.w_spin.setValue(int(d["width"]))
         if "height" in d:
             self.h_spin.setValue(int(d["height"]))
+
         if "fullscreen_index" in d:
             self.fullscreen.setCurrentIndex(int(d["fullscreen_index"]))
+
+        if "refresh_preset" in d:
+            t = str(d["refresh_preset"])
+            i = self.refresh_combo.findText(t)
+            if i >= 0:
+                self.refresh_combo.setCurrentIndex(i)
+
+        if "vsync_index" in d:
+            self.vsync_combo.setCurrentIndex(int(d.get("vsync_index", 0)))
+
         if "pt_dlss_index" in d:
             self.pt_dlss.setCurrentIndex(int(d["pt_dlss_index"]))
+        elif "pt_dlss_index" not in d and "resolution_preset" in d:
+            # v1 presets used pt_dlss_index only
+            pass
+        if "pt_dlss_quality_index" in d:
+            self.pt_dlss_quality.setCurrentIndex(int(d["pt_dlss_quality_index"]))
+
+        if "pt_restir_di_index" in d:
+            self.pt_restir_di.setCurrentIndex(int(d["pt_restir_di_index"]))
+
+        if "denoiser_index" in d:
+            self.denoiser.setCurrentIndex(int(d["denoiser_index"]))
+
+        if "ui_rmlui_index" in d:
+            self.ui_rmlui.setCurrentIndex(int(d["ui_rmlui_index"]))
+
         for key, w in (
             ("terrain_enable", self.terrain_enable),
             ("terrain_collision", self.terrain_collision),
@@ -506,6 +761,33 @@ class LaunchTab(QWidget):
             i = self.map_combo.findText(t)
             if i >= 0:
                 self.map_combo.setCurrentIndex(i)
+
+        # v1 preset compatibility
+        if "resolution_preset" in d and "aspect_ratio" not in d:
+            rp = str(d["resolution_preset"])
+            if re.match(r"^\d+x\d+$", rp):
+                for asp, lst in ASPECT_RESOLUTIONS.items():
+                    if rp in lst:
+                        self.aspect_combo.setCurrentText(asp)
+                        self._populate_res_combo()
+                        idx = self.res_combo.findText(rp)
+                        if idx >= 0:
+                            self.res_combo.setCurrentIndex(idx)
+                        break
+                else:
+                    self.aspect_combo.setCurrentText("Custom")
+                    self._populate_res_combo()
+                    wh = _parse_wh(rp)
+                    if wh:
+                        self.w_spin.setValue(wh[0])
+                        self.h_spin.setValue(wh[1])
+
+        if "pt_dlss_index" in d and "pt_dlss_quality_index" not in d:
+            self.pt_dlss_quality.setCurrentIndex(0)
+
+        self._sync_resolution_widgets()
+        self._on_dlss_changed()
+        self._on_restir_changed()
         self._refresh_map_list()
 
     def load_shipped_defaults_if_present(self) -> None:
