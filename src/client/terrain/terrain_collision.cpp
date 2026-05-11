@@ -16,6 +16,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "physics_jolt.h"
+
 #if QUASIMODO_TERRAIN
 
 extern "C" {
@@ -29,6 +31,7 @@ extern "C" {
 
 extern cvar_t *terrain_enable;
 extern cvar_t *terrain_collision;
+extern cvar_t *terrain_collision_backend;
 extern cvar_t *terrain_debug;
 
 #if USE_CLIENT
@@ -61,6 +64,54 @@ static const float TERRAIN_SUPPORT_SYNTH_FRAC = 1.0f - 1.0f / 8192.0f;
  * PM_StepSlideMove uses the same trace path as walking; BSP allows leaving ground on upward moves.
  */
 static const float TERRAIN_SUPPORT_MAX_UP_DZ = 0.125f;
+
+static void terrain_jolt_compare_after_hull(const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs,
+                                            int legacy_had_hit, int legacy_synthetic, const trace_t *legacy_tr)
+{
+	if (!terrain_collision_backend || terrain_collision_backend->integer != 1)
+		return;
+	if (!legacy_tr)
+		return;
+
+	const int mode = terrain_collision_backend->integer;
+
+	physics_jolt_compare_stats_t before;
+	PhysicsJolt_GetTerrainCompareStats(&before);
+
+	PhysicsJolt_CompareTerrainHeightfieldHull(
+		start, end, mins, maxs, mode, legacy_had_hit, legacy_synthetic, legacy_tr->fraction, legacy_tr->plane.normal,
+		legacy_tr->startsolid ? 1 : 0, legacy_tr->allsolid ? 1 : 0);
+
+	if (!terrain_debug || !terrain_debug->integer)
+		return;
+
+	physics_jolt_compare_stats_t after;
+	PhysicsJolt_GetTerrainCompareStats(&after);
+
+	const uint64_t d_ljm = after.legacy_hit_jolt_miss - before.legacy_hit_jolt_miss;
+	const uint64_t d_jlm = after.jolt_hit_legacy_miss - before.jolt_hit_legacy_miss;
+	const uint64_t d_df = after.frac_mismatch - before.frac_mismatch;
+	const uint64_t d_dn = after.normal_mismatch - before.normal_mismatch;
+	const uint64_t d_syn = after.legacy_synth_jolt_ray_miss - before.legacy_synth_jolt_ray_miss;
+	if (d_ljm + d_jlm + d_df + d_dn + d_syn == 0)
+		return;
+
+	static unsigned s_dbg_ms = 0;
+	static int s_dbg_budget = 0;
+	const unsigned t = Sys_Milliseconds();
+	if (t - s_dbg_ms > 500) {
+		s_dbg_ms = t;
+		s_dbg_budget = 10;
+	}
+	if (s_dbg_budget <= 0)
+		return;
+	s_dbg_budget--;
+
+	Com_Printf("[TERRAIN] J2A compare mismatch +%llu legacy>jolt +%llu jolt>legacy +%llu dfrac +%llu dnorm +%llu "
+	           "synth/jolt_miss\n",
+	           (unsigned long long)d_ljm, (unsigned long long)d_jlm, (unsigned long long)d_df,
+	           (unsigned long long)d_dn, (unsigned long long)d_syn);
+}
 
 static void trace_clear_miss(trace_t *tr)
 {
@@ -404,9 +455,16 @@ bool Terrain_Internal_TraceHeightfieldHull(const vec3_t start, const vec3_t end,
     best.fraction = 2.f;
 
     if (fabsf(dx) < 1e-4f && fabsf(dy) < 1e-4f) {
-        if (!Terrain_Internal_TraceHeightfieldSegment(start, end, start, end, &best))
-            return terrain_try_synthetic_floor_trace(&hf, start, end, mins, maxs, out_tr);
+        if (!Terrain_Internal_TraceHeightfieldSegment(start, end, start, end, &best)) {
+            if (terrain_try_synthetic_floor_trace(&hf, start, end, mins, maxs, out_tr)) {
+                terrain_jolt_compare_after_hull(start, end, mins, maxs, 1, 1, out_tr);
+                return true;
+            }
+            terrain_jolt_compare_after_hull(start, end, mins, maxs, 0, 0, out_tr);
+            return false;
+        }
         *out_tr = best;
+        terrain_jolt_compare_after_hull(start, end, mins, maxs, 1, 0, out_tr);
         return true;
     }
 
@@ -432,10 +490,17 @@ bool Terrain_Internal_TraceHeightfieldHull(const vec3_t start, const vec3_t end,
 
     if (best.fraction <= 1.f) {
         *out_tr = best;
+        terrain_jolt_compare_after_hull(start, end, mins, maxs, 1, 0, out_tr);
         return true;
     }
 
-    return terrain_try_synthetic_floor_trace(&hf, start, end, mins, maxs, out_tr);
+    if (terrain_try_synthetic_floor_trace(&hf, start, end, mins, maxs, out_tr)) {
+        terrain_jolt_compare_after_hull(start, end, mins, maxs, 1, 1, out_tr);
+        return true;
+    }
+
+    terrain_jolt_compare_after_hull(start, end, mins, maxs, 0, 0, out_tr);
+    return false;
 }
 
 static void terrain_merge_debug_log(const char *tag, const trace_t *dst_before, float ter_frac, bool terrain_applied)

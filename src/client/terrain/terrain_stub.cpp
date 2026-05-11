@@ -84,6 +84,7 @@ void Terrain_OnPipelineReload(void) {}
 
 cvar_t *terrain_enable;
 cvar_t *terrain_collision;
+cvar_t *terrain_collision_backend;
 cvar_t *terrain_water;
 cvar_t *terrain_debug;
 cvar_t *terrain_wireframe;

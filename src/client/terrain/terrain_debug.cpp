@@ -8,6 +8,10 @@
 #include <math.h>
 #include <string.h>
 
+#if defined(QUASIMODO_JOLT_PHYSICS) && QUASIMODO_JOLT_PHYSICS
+#include "physics_jolt.h"
+#endif
+
 #if QUASIMODO_TERRAIN
 
 extern "C" {
@@ -21,6 +25,7 @@ extern cvar_t *terrain_enable;
 extern cvar_t *terrain_water;
 extern cvar_t *terrain_water_level;
 extern cvar_t *terrain_collision;
+extern cvar_t *terrain_collision_backend;
 extern cvar_t *terrain_show_chunks;
 extern cvar_t *terrain_show_lod;
 extern cvar_t *terrain_show_seams;
@@ -83,6 +88,8 @@ void TerrainDebug_PrintInfo(void)
     Com_Printf("[TERRAIN] jungle resident (Terrain_IsLoaded): %s\n", Terrain_IsLoaded() ? "yes" : "no");
     Com_Printf("[TERRAIN] terrain_enable: %d\n", terrain_enable && terrain_enable->integer ? 1 : 0);
     Com_Printf("[TERRAIN] terrain_collision: %d\n", terrain_collision && terrain_collision->integer ? 1 : 0);
+    Com_Printf("[TERRAIN] terrain_collision_backend: %d (0=legacy, 1=jolt_compare diagnostics)\n",
+               terrain_collision_backend ? terrain_collision_backend->integer : 0);
     Com_Printf("[TERRAIN] terrain_water: %d\n", terrain_water && terrain_water->integer ? 1 : 0);
     Com_Printf("[TERRAIN] terrain_water_level (cvar): %.3f\n", terrain_water_level ? terrain_water_level->value : 0.f);
     Com_Printf("[TERRAIN] terrain_rtx_instance: %d\n", terrain_rtx_instance && terrain_rtx_instance->integer ? 1 : 0);
@@ -142,6 +149,29 @@ void TerrainDebug_PrintInfo(void)
     const bool col_active = terrain_enable && terrain_enable->integer && terrain_collision && terrain_collision->integer
         && Terrain_IsLoaded();
     Com_Printf("[TERRAIN] collision active: %s\n", col_active ? "yes" : "no");
+    Com_Printf("[TERRAIN] gameplay terrain collision backend: legacy (authoritative); Jolt never replaces traces in "
+               "J2A\n");
+    Com_Printf("[TERRAIN] jolt_compare active (diagnostics only): %s\n",
+               (terrain_collision_backend && terrain_collision_backend->integer == 1) ? "yes" : "no");
+#if defined(QUASIMODO_JOLT_PHYSICS) && QUASIMODO_JOLT_PHYSICS
+    Com_Printf("[TERRAIN] Jolt compiled into client: yes\n");
+    Com_Printf("[TERRAIN] Jolt core initialized (PhysicsJolt_IsAvailable): %d\n", PhysicsJolt_IsAvailable());
+    Com_Printf("[TERRAIN] Jolt terrain heightfield built: %s\n", PhysicsJolt_IsTerrainHeightfieldReady() ? "yes" : "no");
+    {
+        physics_jolt_compare_stats_t s;
+        PhysicsJolt_GetTerrainCompareStats(&s);
+        Com_Printf("[TERRAIN] J2A compare counters: total=%llu skipped_unavail=%llu legacy_hit_jolt_miss=%llu "
+                   "jolt_hit_legacy_miss=%llu frac_mismatch=%llu normal_mismatch=%llu startsolid_mismatch=%llu "
+                   "legacy_synth_jolt_ray_miss=%llu\n",
+                   (unsigned long long)s.compare_total, (unsigned long long)s.compare_skipped_unavailable,
+                   (unsigned long long)s.legacy_hit_jolt_miss, (unsigned long long)s.jolt_hit_legacy_miss,
+                   (unsigned long long)s.frac_mismatch, (unsigned long long)s.normal_mismatch,
+                   (unsigned long long)s.startsolid_mismatch, (unsigned long long)s.legacy_synth_jolt_ray_miss);
+    }
+#else
+    Com_Printf("[TERRAIN] Jolt compiled into client: no (QUASIMODO_JOLT_PHYSICS off at build)\n");
+#endif
+    Com_Printf("[TERRAIN] note: legacy synthetic floor / hull-bottom traces remain authoritative for movement\n");
     Com_Printf("[TERRAIN] collision mode: hull-bottom heightfield segment + footprint ground-support (no full swept "
                "OBB walls)\n");
     Com_Printf("[TERRAIN] dedicated server terrain collision: follow terrain_collision + loaded jungle; SV-only "

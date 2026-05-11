@@ -14,7 +14,6 @@ extern "C" {
 
 #include <string.h>
 
-
 extern bool TerrainJungle_LoadFromVFS(const char *vfs_path, char *errbuf, size_t errbuf_sz);
 extern void TerrainJungle_UnloadAll(void);
 extern void TerrainJungle_PrintLoaded(void);
@@ -100,10 +99,66 @@ bool Terrain_SampleNormal(float world_x, float world_y, vec3_t out_normal)
     return TerrainHeightmap_SampleNormal(&hf, world_x, world_y, out_normal);
 }
 
+#if QUASIMODO_TERRAIN && defined(QUASIMODO_JOLT_PHYSICS) && QUASIMODO_JOLT_PHYSICS
+#include "physics_jolt.h"
+
+static void terrain_physics_jolt_destroy_hf(void)
+{
+    PhysicsJolt_DestroyTerrainHeightfield();
+}
+
+static void terrain_physics_jolt_sync_heightfield(void)
+{
+    terrain_physics_jolt_destroy_hf();
+    PhysicsJolt_ResetTerrainCompareStats();
+    if (!PhysicsJolt_Init())
+        return;
+
+    terrain_heightfield_cpu_t hf;
+    if (!Terrain_Internal_GetActiveHeightfield(&hf))
+        return;
+
+    if (hf.width != hf.height) {
+        static bool s_warned_rect;
+        if (!s_warned_rect) {
+            Com_Printf("[TERRAIN] Jolt heightfield compare: CPU heightfield %dx%d is not square — Jolt mesh disabled.\n",
+                       hf.width, hf.height);
+            s_warned_rect = true;
+        }
+        return;
+    }
+
+    const int dim = hf.width;
+    float *const heights = new float[(size_t)dim * (size_t)dim];
+    for (int iy = 0; iy < dim; iy++) {
+        for (int ix = 0; ix < dim; ix++) {
+            float z = 0.f;
+            if (!TerrainHeightmap_SampleTexel(&hf, ix, iy, &z)) {
+                delete[] heights;
+                return;
+            }
+            heights[(size_t)ix + (size_t)iy * (size_t)dim] = z;
+        }
+    }
+
+    const int ok = PhysicsJolt_BuildTerrainHeightfieldSquare(dim, heights, hf.origin, hf.scale_xy);
+    delete[] heights;
+
+    if (ok)
+        Com_Printf("[TERRAIN] Jolt heightfield built (%d x %d) for diagnostic compare\n", dim, dim);
+    else
+        Com_EPrintf("[TERRAIN] Jolt heightfield build failed (compare will skip until fixed)\n");
+}
+#elif QUASIMODO_TERRAIN
+static void terrain_physics_jolt_destroy_hf(void) {}
+static void terrain_physics_jolt_sync_heightfield(void) {}
+#endif
+
 #endif /* QUASIMODO_TERRAIN */
 
 cvar_t *terrain_enable;
 cvar_t *terrain_collision;
+cvar_t *terrain_collision_backend;
 cvar_t *terrain_water;
 cvar_t *terrain_debug;
 cvar_t *terrain_wireframe;
@@ -232,6 +287,7 @@ static void Terrain_Cmd_Load_f(void)
     terrain_phase4_refresh_chunks();
     TerrainWater_OnMapLoadedVk(NULL);
     terrain_refresh_gpu_after_cpu_change("terrain_load");
+    terrain_physics_jolt_sync_heightfield();
 #endif
     Com_Printf("[TERRAIN] loaded \"%s\"\n", vfs);
 }
@@ -285,6 +341,7 @@ static void Terrain_Cmd_Reload_f(void)
     terrain_phase4_refresh_chunks();
     TerrainWater_OnMapLoadedVk(NULL);
     terrain_refresh_gpu_after_cpu_change("terrain_reload");
+    terrain_physics_jolt_sync_heightfield();
 #endif
     Com_Printf("[TERRAIN] reloaded \"%s\"\n", saved);
 }
@@ -455,6 +512,7 @@ static void Terrain_RegisterVarsAndCommands(void)
 {
     terrain_enable = Cvar_Get("terrain_enable", "0", CVAR_ARCHIVE);
     terrain_collision = Cvar_Get("terrain_collision", "0", CVAR_ARCHIVE);
+    terrain_collision_backend = Cvar_Get("terrain_collision_backend", "0", CVAR_ARCHIVE);
     terrain_water = Cvar_Get("terrain_water", "0", CVAR_ARCHIVE);
     terrain_debug = Cvar_Get("terrain_debug", "0", 0);
     terrain_wireframe = Cvar_Get("terrain_wireframe", "0", 0);
@@ -497,6 +555,9 @@ void Terrain_Init(void)
     Terrain_RegisterVarsAndCommands();
     terrain_registered = true;
     Terrain_ClearLastPath();
+#if defined(QUASIMODO_JOLT_PHYSICS) && QUASIMODO_JOLT_PHYSICS
+    PhysicsJolt_Init();
+#endif
     Com_Printf("[TERRAIN] terrain system initialized\n");
 }
 
@@ -508,6 +569,9 @@ void Terrain_Shutdown(void)
 
     Terrain_Unload();
     Terrain_UnregisterCommands();
+#if defined(QUASIMODO_JOLT_PHYSICS) && QUASIMODO_JOLT_PHYSICS
+    PhysicsJolt_Shutdown();
+#endif
     terrain_registered = false;
 }
 
@@ -548,6 +612,7 @@ bool Terrain_LoadJungle(const char *mapname)
     terrain_try_load_seam_meshes();
     terrain_phase4_refresh_chunks();
     TerrainWater_OnMapLoadedVk(NULL);
+    terrain_physics_jolt_sync_heightfield();
 #endif
     return true;
 }
@@ -555,6 +620,7 @@ bool Terrain_LoadJungle(const char *mapname)
 void Terrain_Unload(void)
 {
 #if QUASIMODO_TERRAIN
+    terrain_physics_jolt_destroy_hf();
     Terrain_OnMapUnload_Vk();
     TerrainChunks_Free();
     TerrainSeam_FreeAll();

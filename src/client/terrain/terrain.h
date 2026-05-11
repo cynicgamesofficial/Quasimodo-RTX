@@ -18,6 +18,8 @@ extern "C" {
 /* Fallback CVars (registered when Terrain_Init runs). */
 extern cvar_t *terrain_enable;
 extern cvar_t *terrain_collision;
+/* 0 = legacy only, 1 = jolt_compare (diagnostics; legacy remains authoritative). */
+extern cvar_t *terrain_collision_backend;
 extern cvar_t *terrain_water;
 extern cvar_t *terrain_debug;
 extern cvar_t *terrain_wireframe;
