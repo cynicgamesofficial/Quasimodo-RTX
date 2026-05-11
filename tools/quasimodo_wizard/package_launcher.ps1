@@ -26,6 +26,7 @@ if (Test-Path $Icon) {
 }
 
 # PyInstaller --add-data uses "source;dest_in_bundle" on Windows (semicolon).
+# Full ``quasimodo_wizard`` tree includes ``compilers/Q220`` (q2tool.exe + compile_map.bat).
 $PkgDir = Join-Path $ToolRoot "quasimodo_wizard"
 $PresetsDir = Join-Path $ToolRoot "presets"
 $AssetsDir = Join-Path $ToolRoot "assets"

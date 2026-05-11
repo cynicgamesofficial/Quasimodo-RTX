@@ -1,5 +1,5 @@
 """
-Map Wizard tab — legacy Quake 1 → Q2RTX map analyze / convert / compile workflow (unchanged behavior).
+Map Wizard tab — analyze / convert legacy map sources, then compile with bundled compilers/Q220 q2tool.
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ class MapWizardTab(QWidget):
         outer = QVBoxLayout(self)
         outer.addWidget(
             QLabel(
-                "Map Wizard — import and compile Quake 1-style .map sources for Quasimodo RTX / Q2RTX pipelines. "
-                "This is the former \"Quake Wizard\" workflow, kept for compatibility."
+                "Map Wizard — analyze / convert legacy map sources, then compile for Quasimodo RTX / Quake II using "
+                "the bundled compilers/Q220 q2tool (BSP, VIS, RAD)."
             )
         )
         row = QHBoxLayout()

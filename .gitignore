@@ -117,3 +117,9 @@ dist/
 launcher.spec
 __pycache__/
 *.py[cod]
+
+# Bundled Wizard map compiler (exception to global *.exe — Q220 q2tool only)
+!tools/quasimodo_wizard/quasimodo_wizard/compilers/
+!tools/quasimodo_wizard/quasimodo_wizard/compilers/Q220/
+!tools/quasimodo_wizard/quasimodo_wizard/compilers/Q220/q2tool.exe
+!tools/quasimodo_wizard/quasimodo_wizard/compilers/Q220/compile_map.bat

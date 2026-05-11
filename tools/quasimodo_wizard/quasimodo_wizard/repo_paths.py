@@ -3,6 +3,7 @@ Path helpers for Quasimodo Wizard. All roots are derived from source layout — 
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 
@@ -16,9 +17,63 @@ def tool_root() -> Path:
     return package_root().parent
 
 
+def _repository_root_from_source_tree() -> Path:
+    return tool_root().parent.parent
+
+
+def _repository_root_frozen() -> Path:
+    """Best-effort repo root when running as PyInstaller one-file (launcher next to clone)."""
+    candidates = (
+        Path(sys.executable).resolve().parent,
+        Path.cwd().resolve(),
+    )
+    for start in candidates:
+        p = start
+        for _ in range(14):
+            if (p / "baseq2").is_dir() and (
+                (p / "CMakeLists.txt").is_file() or (p / "q2rtx.exe").is_file()
+            ):
+                return p
+            parent = p.parent
+            if parent == p:
+                break
+            p = parent
+    return Path.cwd().resolve()
+
+
 def repository_root() -> Path:
-    """Quasimodo RTX repository root (parent of ``tools/``)."""
-    return tool_root().parent
+    """Quasimodo RTX repository root (contains ``tools/``, ``baseq2/``, ``editor/``)."""
+    if getattr(sys, "frozen", False):
+        return _repository_root_frozen()
+    return _repository_root_from_source_tree()
+
+
+def wizard_compiler_dir() -> Path:
+    """Bundled Quasimodo q2tool folder: ``quasimodo_wizard/compilers/Q220`` (next to ``q2tool.exe``)."""
+    return package_root() / "compilers" / "Q220"
+
+
+def wizard_q2tool_path() -> Path:
+    return wizard_compiler_dir() / "q2tool.exe"
+
+
+def wizard_compile_map_script_path() -> Path:
+    return wizard_compiler_dir() / "compile_map.bat"
+
+
+def editor_dir() -> Path:
+    """Shipped map compiler folder at repository root: ``editor/`` (``q2tool.exe``, ``compile_map.bat``)."""
+    return repository_root() / "editor"
+
+
+def q2tool_path() -> Path:
+    """``editor/q2tool.exe`` — Quasimodo / Q2 BSP toolchain."""
+    return editor_dir() / "q2tool.exe"
+
+
+def compile_map_script_path() -> Path:
+    """``editor/compile_map.bat`` — BSP / VIS / RAD driver script next to ``q2tool``."""
+    return editor_dir() / "compile_map.bat"
 
 
 def user_data_dir() -> Path:
