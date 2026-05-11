@@ -50,6 +50,7 @@ ELSE()
 ENDIF()
 OPTION(CONFIG_BUILD_GLSLANG "Build glslangValidator from source instead of using the SDK" ${DEFAULT_BUILD_GLSLANG})
 OPTION(QUASIMODO_TERRAIN "Enable Quasimodo terrain subsystem (.jungle)" ON)
+OPTION(QUASIMODO_JOLT_PHYSICS "Enable optional Jolt physics integration (requires Third Parties/JoltPhysics)" OFF)
 OPTION(CONFIG_BUILD_IPO "Enable interprocedural optimizations" OFF)
 OPTION(CONFIG_BUILD_SHADER_DEBUG_INFO "Build shaders with debug info" OFF)
 OPTION(USE_SYSTEM_ZLIB "Prefer system ZLIB instead of the bundled one" OFF)
@@ -116,6 +117,27 @@ ENDIF()
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_BINARY_DIR}/extern/install)
 
 add_subdirectory(extern)
+
+# Optional JoltPhysics (official clone under Third Parties/JoltPhysics — gitignored, see download-thirdparties.ps1).
+# Library only: Jolt's Build/CMakeLists skips samples/tests when not the top-level project.
+if(QUASIMODO_JOLT_PHYSICS)
+	if(CMAKE_VERSION VERSION_LESS "3.20")
+		message(FATAL_ERROR "QUASIMODO_JOLT_PHYSICS requires CMake 3.20+ (JoltPhysics Build/CMakeLists.txt). Current: ${CMAKE_VERSION}")
+	endif()
+	set(JOLT_SOURCE_DIR "${CMAKE_SOURCE_DIR}/Third Parties/JoltPhysics")
+	set(JOLT_BUILD_DIR "${JOLT_SOURCE_DIR}/Build")
+	if(NOT EXISTS "${JOLT_BUILD_DIR}/CMakeLists.txt")
+		message(FATAL_ERROR "QUASIMODO_JOLT_PHYSICS is ON but JoltPhysics is missing.\nRun: .\\download-thirdparties.ps1\nExpected: ${JOLT_BUILD_DIR}/CMakeLists.txt")
+	endif()
+	# Avoid /WX from Jolt when embedded in Q2RTX (warnings differ across toolchain/SDK).
+	# Note: this sets a CACHE entry; toggling QUASIMODO_JOLT_PHYSICS back OFF leaves the cache value
+	# until cleared in CMake GUI or a fresh build directory.
+	set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Jolt embedded in Q2RTX: disable warnings-as-errors" FORCE)
+	add_subdirectory("${JOLT_BUILD_DIR}" "${CMAKE_BINARY_DIR}/extern/jolt")
+	if(TARGET Jolt)
+		set_target_properties(Jolt PROPERTIES FOLDER extern/Jolt)
+	endif()
+endif()
 
 set(Q2RTX_FREETYPE_ADDED_FROM_SOURCE OFF)
 if(IS_64_BIT AND Q2RTX_RMLUI_FONT_ENGINE STREQUAL "freetype" AND Q2RTX_FREETYPE_ROOT)

@@ -564,6 +564,21 @@ IF (TARGET client)
         TARGET_COMPILE_DEFINITIONS(client PRIVATE QUASIMODO_TERRAIN=1)
     ENDIF()
 
+    if(QUASIMODO_JOLT_PHYSICS AND TARGET Jolt)
+        target_sources(client PRIVATE
+            physics/physics_jolt.cpp
+            physics/physics_jolt.h)
+        target_include_directories(client PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/physics")
+        target_include_directories(client PRIVATE "${CMAKE_SOURCE_DIR}/Third Parties/JoltPhysics")
+        TARGET_LINK_LIBRARIES(client Jolt)
+        target_compile_definitions(client PRIVATE QUASIMODO_JOLT_PHYSICS=1)
+    else()
+        target_sources(client PRIVATE
+            physics/physics_jolt_stub.cpp
+            physics/physics_jolt.h)
+        target_include_directories(client PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/physics")
+    endif()
+
     IF(CONFIG_USE_CURL)
         TARGET_LINK_LIBRARIES(client libcurl)
         TARGET_SOURCES(client PRIVATE ${SRC_CLIENT_HTTP})
@@ -705,6 +720,10 @@ SOURCE_GROUP("game\\headers" FILES ${HEADERS_GAME})
 SOURCE_GROUP("client\\sources" FILES ${SRC_CLIENT})
 SOURCE_GROUP("client\\headers" FILES ${HEADERS_CLIENT})
 SOURCE_GROUP("client\\terrain" FILES ${SRC_TERRAIN} ${HEADERS_TERRAIN})
+SOURCE_GROUP("client\\physics" FILES
+    physics/physics_jolt.h
+    physics/physics_jolt.cpp
+    physics/physics_jolt_stub.cpp)
 SOURCE_GROUP("server\\sources" FILES ${SRC_SERVER})
 SOURCE_GROUP("server\\headers" FILES ${HEADERS_SERVER})
 SOURCE_GROUP("common\\sources" FILES ${SRC_COMMON})
