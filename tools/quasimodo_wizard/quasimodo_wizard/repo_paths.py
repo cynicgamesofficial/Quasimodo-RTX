@@ -77,7 +77,24 @@ def compile_map_script_path() -> Path:
 
 
 def user_data_dir() -> Path:
-    """Writable per-user JSON and presets (gitignored patterns recommended for secrets)."""
+    """
+    Writable per-user JSON and presets (gitignored patterns recommended for secrets).
+
+    In PyInstaller one-file mode, ``tool_root()`` is ``sys._MEIPASS`` (extracted temp). Writing
+    ``user_data`` there can fail (read-only, AV) or be wiped on exit. Use the real repo's
+    ``tools/quasimodo_wizard/user_data`` when ``sys.frozen``, with a local-app fallback.
+    """
+    if getattr(sys, "frozen", False):
+        try:
+            p = repository_root() / "tools" / "quasimodo_wizard" / "user_data"
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        except OSError:
+            import os
+
+            base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "QuasimodoRTX" / "Wizard"
+            base.mkdir(parents=True, exist_ok=True)
+            return base
     p = tool_root() / "user_data"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -96,3 +113,14 @@ def app_settings_path() -> Path:
 def default_presets_path() -> Path:
     """Shipped template presets (relative paths only)."""
     return tool_root() / "presets" / "default_presets.json"
+
+
+# Repo-relative default for compiled BSP copy destination (no absolute paths in committed defaults).
+DEFAULT_COMPILED_MAP_DESTINATION_REL = "baseq2/maps"
+
+
+def wizard_asset_path(*relative_parts: str) -> Path:
+    """Path under ``quasimodo_wizard/assets/`` (works in source tree and PyInstaller extract)."""
+    if not relative_parts:
+        return package_root() / "assets"
+    return package_root() / "assets" / Path(*relative_parts)

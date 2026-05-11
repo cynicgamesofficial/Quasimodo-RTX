@@ -30,6 +30,11 @@ if (Test-Path $Icon) {
 $PkgDir = Join-Path $ToolRoot "quasimodo_wizard"
 $PresetsDir = Join-Path $ToolRoot "presets"
 $AssetsDir = Join-Path $ToolRoot "assets"
+# Hidden imports: SVG header uses QtSvgWidgets; some PyInstaller graphs omit it.
+$hidden = @(
+  "--hidden-import", "PySide6.QtSvgWidgets"
+)
+
 $addData = @(
   "--add-data", "$PkgDir;quasimodo_wizard",
   "--add-data", "$PresetsDir;presets",
@@ -41,7 +46,7 @@ $mainRel = "tools\quasimodo_wizard\main.py"
 Push-Location $RepoRoot
 try {
   # --windowed: no console window (GUI-only). One-file exe does not require python.exe on PATH.
-  & python -m PyInstaller --noconfirm --clean --onefile --windowed --name launcher @iconArg @addData $mainRel
+  & python -m PyInstaller --noconfirm --clean --onefile --windowed --name launcher @iconArg @hidden @addData $mainRel
   $built = Join-Path $RepoRoot "dist\launcher.exe"
   $rootExe = Join-Path $RepoRoot "launcher.exe"
   if (Test-Path $built) {

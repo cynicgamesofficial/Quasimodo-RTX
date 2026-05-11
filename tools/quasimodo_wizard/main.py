@@ -14,6 +14,7 @@ See ``tools/quasimodo_wizard/package_launcher.ps1``.
 from __future__ import annotations
 
 import sys
+import traceback
 from pathlib import Path
 
 # PyInstaller one-file: script lives next to bundled ``quasimodo_wizard/``, ``presets/``, ``assets/`` under sys._MEIPASS.
@@ -23,6 +24,28 @@ if not _PKG.is_dir():
     print("Quasimodo Wizard: missing package directory:", _PKG, file=sys.stderr)
     sys.exit(1)
 sys.path.insert(0, str(_PKG.resolve()))
+
+
+def _install_frozen_crash_log() -> None:
+    """If the GUI build crashes with no console, write the last traceback to %TEMP%."""
+    if not getattr(sys, "frozen", False):
+        return
+
+    def _hook(exc_type, exc, tb):  # noqa: ANN001
+        try:
+            import tempfile
+
+            p = Path(tempfile.gettempdir()) / "quasimodo_wizard_last_error.txt"
+            text = "".join(traceback.format_exception(exc_type, exc, tb))
+            p.write_text(text, encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+
+
+_install_frozen_crash_log()
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 

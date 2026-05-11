@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -43,10 +44,12 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QPlainTextEdit,
+    QScrollArea,
 )
 
+from core.q2config import get_q2config_path, load_q2config
+from core.user_settings import load_app_settings_paths_only, save_app_settings_merge
 from repo_paths import (
-    app_settings_path,
     default_presets_path,
     presets_dir,
     repository_root,
@@ -90,12 +93,27 @@ def _parse_wh(res: str) -> Optional[Tuple[int, int]]:
     return int(m.group(1)), int(m.group(2))
 
 
+def _parse_vid_geometry(geo: str) -> Optional[Tuple[int, int]]:
+    """Parse ``vid_geometry`` primary field: ``WxH``, ``W x H``, optional ``+x+y`` suffix, quotes stripped."""
+    if not geo:
+        return None
+    head = geo.split("+", 1)[0].strip().strip('"').strip("'")
+    m = re.match(r"^(\d+)\s*x\s*(\d+)$", head, re.I)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m2 = re.match(r"^(\d+)\s+(\d+)$", head)
+    if m2:
+        return int(m2.group(1)), int(m2.group(2))
+    return _parse_wh(head)
+
+
 class LaunchTab(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
         self._repo = repository_root()
-        root = QVBoxLayout(self)
+        inner = QWidget()
+        root = QVBoxLayout(inner)
 
         paths = QGroupBox("Executable / game data")
         pl = QFormLayout(paths)
@@ -116,6 +134,17 @@ class LaunchTab(QWidget):
         row_b.addWidget(self._btn_base)
         pl.addRow("baseq2 folder:", row_b)
         root.addWidget(paths)
+
+        q2_row = QHBoxLayout()
+        self._q2config_status = QLabel()
+        self._q2config_status.setWordWrap(True)
+        self._q2config_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._btn_reload_q2config = QPushButton("Reload from q2config")
+        self._btn_reload_q2config.setToolTip("Re-read baseq2/q2config.cfg and apply engine fields to this tab (does not load a preset).")
+        self._btn_reload_q2config.clicked.connect(self._reload_q2config_clicked)
+        q2_row.addWidget(self._q2config_status, stretch=1)
+        q2_row.addWidget(self._btn_reload_q2config)
+        root.addLayout(q2_row)
 
         mapg = QGroupBox("Map")
         ml = QFormLayout(mapg)
@@ -309,19 +338,67 @@ class LaunchTab(QWidget):
         self.preview.setMinimumHeight(120)
         root.addWidget(self.preview)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(inner)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+
         self._load_defaults()
-        self._load_app_settings()
-        if not app_settings_path().is_file():
-            self.load_shipped_defaults_if_present()
+        self.load_shipped_defaults_if_present(update_preview=False)
+
+        paths_data = load_app_settings_paths_only()
+        if paths_data.get("exe"):
+            self.exe_edit.setText(str(paths_data["exe"]))
+        if paths_data.get("baseq2"):
+            self.baseq2_edit.setText(str(paths_data["baseq2"]))
+        if paths_data.get("last_map"):
+            self.map_manual.setText(str(paths_data["last_map"]))
+
         self._refresh_map_list()
         self._refresh_preset_list()
         self._populate_res_combo()
         self._sync_resolution_widgets()
+
+        self._reload_q2config_into_launch()
+
         self._on_dlss_changed()
         self._on_restir_changed()
         self._update_preview()
 
-    # --- Display wiring ---
+    def _refresh_q2config_status(self, cfg_path: Path, cv: Dict[str, str]) -> None:
+        rel_try = "baseq2/q2config.cfg"
+        if not cfg_path.is_file():
+            self._q2config_status.setText(
+                f"Engine config not found ({rel_try} under repo). Using launcher / shipped defaults."
+            )
+            return
+        try:
+            mtime = datetime.fromtimestamp(cfg_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        except OSError:
+            mtime = "?"
+        keys = len(cv)
+        lines = [
+            f"Loaded engine config: {rel_try} ({keys} cvar assignments, last write wins per name; modified {mtime}).",
+        ]
+        for n in getattr(self, "_q2config_engine_notes", []):
+            lines.append(n)
+        self._q2config_status.setText("\n".join(lines))
+
+    def _reload_q2config_into_launch(self) -> None:
+        cfg_path = get_q2config_path(repo_root=self._repo)
+        qc = load_q2config(cfg_path)
+        self._apply_cvars_from_q2config(qc)
+        self._refresh_q2config_status(cfg_path, qc)
+
+    def _reload_q2config_clicked(self) -> None:
+        self._reload_q2config_into_launch()
+        self._on_dlss_changed()
+        self._on_restir_changed()
+        self._update_preview()
+
     def _on_aspect_changed(self, _t: str = "") -> None:
         self._populate_res_combo()
         self._sync_resolution_widgets()
@@ -377,6 +454,162 @@ class LaunchTab(QWidget):
             self.denoiser.setCurrentIndex(0)
             self.denoiser.blockSignals(False)
         self._update_preview()
+
+    def _apply_cvars_from_q2config(self, cv: Dict[str, str]) -> None:
+        """Apply values parsed from ``baseq2/q2config.cfg`` (keys lower-case). Uses blocked signals."""
+        self._q2config_engine_notes = []
+        base_tt = (
+            "Engine uses pt_nrd only with ReSTIR DI enabled. NRD is disabled in this profile when ReSTIR DI is Off."
+        )
+        self.denoiser.setToolTip(base_tt)
+
+        block_list: List[QWidget] = [
+            self.aspect_combo,
+            self.res_combo,
+            self.w_spin,
+            self.h_spin,
+            self.fullscreen,
+            self.vsync_combo,
+            self.pt_dlss,
+            self.pt_dlss_quality,
+            self.pt_restir_di,
+            self.denoiser,
+            self.ui_rmlui,
+            self.ui_splash,
+            self.terrain_enable,
+            self.terrain_collision,
+            self.terrain_water,
+            self.terrain_rtx,
+            self.jolt_compare,
+            self.logfile,
+            self.developer,
+            self.dedicated,
+        ]
+        for w in block_list:
+            w.blockSignals(True)
+        try:
+            self._apply_cvars_from_q2config_inner(cv)
+        finally:
+            for w in reversed(block_list):
+                w.blockSignals(False)
+
+    def _apply_cvars_from_q2config_inner(self, cv: Dict[str, str]) -> None:
+        vgeo = cv.get(CVAR_VID_GEOMETRY)
+        if vgeo:
+            wh = _parse_vid_geometry(vgeo)
+            if wh:
+                w, h = wh
+                tag = f"{w}x{h}"
+                placed = False
+                for asp, lst in ASPECT_RESOLUTIONS.items():
+                    if tag in lst:
+                        self.aspect_combo.setCurrentText(asp)
+                        self._populate_res_combo()
+                        idx = self.res_combo.findText(tag)
+                        if idx >= 0:
+                            self.res_combo.setCurrentIndex(idx)
+                        placed = True
+                        break
+                if not placed:
+                    self.aspect_combo.setCurrentText("Custom")
+                    self._populate_res_combo()
+                    self.w_spin.setValue(w)
+                    self.h_spin.setValue(h)
+
+        fs = cv.get(CVAR_VID_FULLSCREEN)
+        if fs is not None and fs.strip().lstrip("-").isdigit():
+            self.fullscreen.setCurrentIndex(1 if int(fs.strip()) else 0)
+
+        vs = cv.get(CVAR_VID_VSYNC)
+        if vs is not None:
+            vst = vs.strip()
+            if vst in ("0", "1"):
+                self.vsync_combo.setCurrentIndex(1 if vst == "0" else 2)
+            elif vst.lstrip("-").isdigit():
+                self.vsync_combo.setCurrentIndex(1 if int(vst) == 0 else 2)
+
+        pd = cv.get(CVAR_PT_DLSS)
+        if pd is not None:
+            pds = pd.strip()
+            if pds == "0":
+                self.pt_dlss.setCurrentIndex(1)
+            elif pds == "1":
+                self.pt_dlss.setCurrentIndex(2)
+
+        pq = cv.get(CVAR_PT_DLSS_QUALITY)
+        if pq is not None and pq.strip().lstrip("-").isdigit():
+            qi = int(pq.strip()) + 1
+            if 1 <= qi < self.pt_dlss_quality.count():
+                self.pt_dlss_quality.setCurrentIndex(qi)
+
+        pr = cv.get(CVAR_PT_RESTIR_DI)
+        if pr is not None:
+            prs = pr.strip()
+            if prs == "0":
+                self.pt_restir_di.setCurrentIndex(1)
+            elif prs == "1":
+                self.pt_restir_di.setCurrentIndex(2)
+
+        fe = cv.get(CVAR_FLT_ENABLE)
+        pn = cv.get(CVAR_PT_NRD)
+        restir_ok = cv.get(CVAR_PT_RESTIR_DI, "").strip() == "1"
+        pn_strip = (pn or "").strip()
+        invalid_nrd = fe is not None and fe.strip() == "1" and pn_strip == "1" and not restir_ok
+        if invalid_nrd:
+            self._q2config_engine_notes.append(
+                "q2config requested NRD (pt_nrd 1) but ReSTIR DI is off; launcher shows Default / ASVGF-safe denoiser instead."
+            )
+            self.denoiser.setCurrentIndex(0)
+        elif fe is not None:
+            fes = fe.strip()
+            if fes == "0":
+                self.denoiser.setCurrentIndex(1)
+            elif fes == "1" and not restir_ok:
+                self.denoiser.setCurrentIndex(0)
+            elif fes == "1" and restir_ok:
+                if pn is None:
+                    self.denoiser.setCurrentIndex(0)
+                elif pn_strip == "0":
+                    self.denoiser.setCurrentIndex(2)
+                elif pn_strip == "1":
+                    self.denoiser.setCurrentIndex(3)
+                else:
+                    self.denoiser.setCurrentIndex(0)
+
+        ur = cv.get(CVAR_UI_RMLUI)
+        if ur is not None:
+            urs = ur.strip()
+            if urs == "1":
+                self.ui_rmlui.setCurrentIndex(1)
+            elif urs == "0":
+                self.ui_rmlui.setCurrentIndex(2)
+
+        us = cv.get(CVAR_UI_SPLASH)
+        if us is not None:
+            self.ui_splash.setChecked(us.strip() == "1")
+
+        for key, chk in (
+            ("terrain_enable", self.terrain_enable),
+            ("terrain_collision", self.terrain_collision),
+            ("terrain_water", self.terrain_water),
+            ("terrain_rtx_instance", self.terrain_rtx),
+            ("terrain_collision_backend", self.jolt_compare),
+        ):
+            val = cv.get(key)
+            if val is not None:
+                chk.setChecked(val.strip() not in ("0", "", "false"))
+
+        lf = cv.get("logfile")
+        if lf is not None:
+            self.logfile.setChecked(lf.strip() not in ("", "0"))
+
+        dv = cv.get("developer")
+        if dv is not None:
+            self.developer.setChecked(dv.strip() == "1")
+
+        dd = cv.get("dedicated")
+        if dd is not None:
+            self.dedicated.setChecked(dd.strip() == "1")
 
     def _load_defaults(self) -> None:
         self.exe_edit.setText("q2rtx.exe")
@@ -581,31 +814,13 @@ class LaunchTab(QWidget):
         _safe_folder_open(p)
 
     def _save_app_settings(self) -> None:
-        data = {
-            "exe": self.exe_edit.text().strip(),
-            "baseq2": self.baseq2_edit.text().strip(),
-            "last_map": self._selected_map(),
-            "last_preset": self.preset_combo.currentText(),
-        }
-        try:
-            app_settings_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except OSError:
-            pass
-
-    def _load_app_settings(self) -> None:
-        p = app_settings_path()
-        if not p.is_file():
-            return
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            if data.get("exe"):
-                self.exe_edit.setText(str(data["exe"]))
-            if data.get("baseq2"):
-                self.baseq2_edit.setText(str(data["baseq2"]))
-            if data.get("last_map"):
-                self.map_manual.setText(str(data["last_map"]))
-        except (json.JSONDecodeError, OSError):
-            pass
+        save_app_settings_merge(
+            {
+                "exe": self.exe_edit.text().strip(),
+                "baseq2": self.baseq2_edit.text().strip(),
+                "last_map": self._selected_map(),
+            }
+        )
 
     def _refresh_preset_list(self) -> None:
         self.preset_combo.blockSignals(True)
@@ -790,7 +1005,7 @@ class LaunchTab(QWidget):
         self._on_restir_changed()
         self._refresh_map_list()
 
-    def load_shipped_defaults_if_present(self) -> None:
+    def load_shipped_defaults_if_present(self, update_preview: bool = True) -> None:
         p = default_presets_path()
         if not p.is_file():
             return
@@ -803,6 +1018,7 @@ class LaunchTab(QWidget):
                 adv = first.get("advanced")
                 if isinstance(adv, list):
                     self.main_window.advanced_tab.set_settings(adv)
-                self._update_preview()
+                if update_preview:
+                    self._update_preview()
         except (json.JSONDecodeError, OSError):
             pass

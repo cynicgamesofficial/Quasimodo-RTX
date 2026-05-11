@@ -112,6 +112,9 @@ Third Parties/JoltPhysics/
 !docs/media/readme/
 !docs/media/readme/*.png
 
+# Quasimodo Wizard local user settings (may contain absolute paths)
+tools/quasimodo_wizard/user_data/
+
 # PyInstaller / local Python noise (Quasimodo Wizard — repo-root one-file build)
 dist/
 launcher.spec

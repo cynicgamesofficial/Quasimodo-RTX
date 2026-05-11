@@ -29,6 +29,10 @@
         "dedicated": false,
         "map_manual": "",
         "map_combo": "(none)"
+      },
+      "compile": {
+        "compiled_map_destination": "baseq2/maps",
+        "copy_compiled_bsp": true
       }
     }
   ]
