@@ -111,3 +111,9 @@ Third Parties/JoltPhysics/
 !docs/media/
 !docs/media/readme/
 !docs/media/readme/*.png
+
+# PyInstaller / local Python noise (Quasimodo Wizard — repo-root one-file build)
+dist/
+launcher.spec
+__pycache__/
+*.py[cod]

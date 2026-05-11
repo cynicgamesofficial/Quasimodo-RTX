@@ -20,7 +20,15 @@ This repository is still GPL/open-source engine work, but the direction is broad
 
 ![Quasimodo Wizard launcher](docs/media/readme/quasimodo_wizard_gui.png)
 
-Quasimodo Wizard is the companion launcher and tooling app for Quasimodo RTX: launch `q2rtx.exe` with presets, tune common renderer and terrain cvars from a **Launch** tab, and keep the legacy map import / analyze / compile pipeline under **Map Wizard**. Run from the repository with `python tools/quasimodo_wizard/main.py` or `tools\quasimodo_wizard\run_quasimodo_wizard.bat` (see `tools/quasimodo_wizard/package_launcher.ps1` for optional one-file `launcher.exe` packaging).
+Quasimodo Wizard is the companion launcher and tooling app for Quasimodo RTX:
+
+- **Launch** tab — pick `q2rtx.exe`, apply named **presets**, edit common renderer/terrain cvars, and preview the command line before launch.
+- **Map Wizard** tab — legacy map analyze / convert / compile workflow for porting content.
+- **Advanced** tab — free-form `+set` rows merged into the launch command.
+
+Run from the repository with `python tools/quasimodo_wizard/main.py` or `tools\quasimodo_wizard\run_quasimodo_wizard.bat`.
+
+**Windows packaging:** `tools/quasimodo_wizard/package_launcher.ps1` builds a repo-root **`launcher.exe`** with PyInstaller **`--windowed`** (same as `--noconsole`) so only the Qt GUI appears — no Python console window. The script copies `dist/launcher.exe` to the repository root; generated `dist/`, `build/`, and `launcher.spec` stay gitignored — do not commit the binary unless your release process explicitly requires it.
 
 ## Latest Highlights
 

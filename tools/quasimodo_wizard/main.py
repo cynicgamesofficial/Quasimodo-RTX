@@ -16,12 +16,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# PyInstaller one-file: script lives next to bundled ``quasimodo_wizard/``, ``presets/``, ``assets/`` under sys._MEIPASS.
 _TOOL_ROOT = Path(__file__).resolve().parent
 _PKG = _TOOL_ROOT / "quasimodo_wizard"
 if not _PKG.is_dir():
     print("Quasimodo Wizard: missing package directory:", _PKG, file=sys.stderr)
     sys.exit(1)
-sys.path.insert(0, str(_PKG))
+sys.path.insert(0, str(_PKG.resolve()))
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
