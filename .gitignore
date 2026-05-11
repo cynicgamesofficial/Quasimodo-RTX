@@ -105,3 +105,9 @@ Third Parties/JoltPhysics/
 
 # Local Cursor / editor workspace files may contain machine-specific paths
 *.code-workspace
+
+# README screenshots (exceptions to global *.png above — curated repo media only)
+!docs/
+!docs/media/
+!docs/media/readme/
+!docs/media/readme/*.png

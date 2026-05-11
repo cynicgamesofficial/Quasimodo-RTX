@@ -1,0 +1,10 @@
+# Local wizard state (may contain absolute paths if user browsed outside the repo)
+user_data/**
+!user_data/README.txt
+
+# PyInstaller / Python noise if you experiment locally
+__pycache__/
+*.py[cod]
+dist/
+build/
+*.spec.bak

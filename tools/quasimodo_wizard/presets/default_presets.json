@@ -1,0 +1,28 @@
+{
+  "description": "Shipped template presets — relative paths only, safe for public repo.",
+  "presets": [
+    {
+      "name": "default_singleplayer",
+      "launch": {
+        "exe": "q2rtx.exe",
+        "baseq2": "baseq2",
+        "resolution_preset": "1920x1080",
+        "width": 1920,
+        "height": 1080,
+        "fullscreen_index": 0,
+        "pt_dlss_index": 0,
+        "terrain_enable": true,
+        "terrain_collision": true,
+        "terrain_water": true,
+        "terrain_rtx": true,
+        "jolt_compare": false,
+        "ui_splash": false,
+        "logfile": true,
+        "developer": false,
+        "dedicated": false,
+        "map_manual": "",
+        "map_combo": "(none)"
+      }
+    }
+  ]
+}

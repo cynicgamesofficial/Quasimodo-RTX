@@ -1,6 +1,51 @@
 # Quasimodo RTX
 
-**Latest additions:** We added **ReSTIR DI** and **NRD**. **NVIDIA DLSS** (super resolution) and **NVIDIA Reflex** (latency reduction).
+Quasimodo RTX extends Quake II RTX with modernized tooling, RTX terrain, water, material/splat workflows, and launcher support.
+
+## Terrain & Water
+
+![Quasimodo RTX terrain and water screenshot 1](docs/media/readme/waterterrain1.png)
+
+A large RTX terrain test scene with water integration, terrain BLAS/TLAS rendering, splat/material support, and optional terrain collision diagnostics.
+
+![Quasimodo RTX terrain and water screenshot 2](docs/media/readme/waterterrain2.png)
+
+Second terrain/water validation view showing the hybrid BSP + terrain workflow and runtime test environment.
+
+**Quasimodo RTX** is a FutureRetro fork of Quake II RTX focused on keeping the classic Quake II identity while extending the engine with modern RTX rendering, terrain, water, HTML/CSS-driven UI, tooling, and experimental physics infrastructure.
+
+This repository is still GPL/open-source engine work, but the direction is broader than a renderer fork: Quasimodo RTX is becoming a modding-friendly retro engine with RTX path tracing, terrain authoring, modern launcher workflows, and safer development tooling.
+
+## Quasimodo Wizard
+
+![Quasimodo Wizard launcher](docs/media/readme/quasimodo_wizard_gui.png)
+
+Quasimodo Wizard is the companion launcher and tooling app for Quasimodo RTX: launch `q2rtx.exe` with presets, tune common renderer and terrain cvars from a **Launch** tab, and keep the legacy map import / analyze / compile pipeline under **Map Wizard**. Run from the repository with `python tools/quasimodo_wizard/main.py` or `tools\quasimodo_wizard\run_quasimodo_wizard.bat` (see `tools/quasimodo_wizard/package_launcher.ps1` for optional one-file `launcher.exe` packaging).
+
+## Latest Highlights
+
+- **RTX terrain system**  
+  Optional `.jungle` terrain loading, heightfield chunks, CPU LOD groundwork, static terrain BLAS/TLAS instancing, terrain debug commands, splatmap smoke assets, and opt-in terrain collision.
+
+- **Terrain water**  
+  Optional `.jungle` water plane support with path-traced visibility, water BLAS/TLAS integration, debug reporting, and safe `terrain_water 0` default behavior.
+
+- **Terrain collision and diagnostics**  
+  BSP + terrain hybrid collision is available behind cvars. JoltPhysics is integrated as an optional, default-off diagnostic backend for comparing terrain support behavior, while legacy gameplay collision remains authoritative.
+
+- **HTML/CSS UI workflow**  
+  RmlUi-based interface work enables a more modern UI authoring path using RML/CSS-style layouts instead of hardcoded menu screens.
+
+- **Startup splash control**  
+  The splash screen is now cvar-gated so profiling, direct `+map` launches, and automated test launches can skip it cleanly.
+
+- **Quasimodo Wizard / Launcher workflow**  
+  The **Quasimodo Wizard** app under `tools/quasimodo_wizard/` provides a **Launch** tab (presets, common cvars, command preview), **Map Wizard** (legacy analyze/convert/compile flow), and **Advanced** arbitrary `+set` rows. Optional PyInstaller packaging script targets a repo-root `launcher.exe`.
+
+- **Modern RTX stack**  
+  The engine includes ReSTIR DI, NRD, NVIDIA DLSS Super Resolution, and NVIDIA Reflex integration work.
+
+
 
 ## Build From Scratch (Windows, recommended)
 
