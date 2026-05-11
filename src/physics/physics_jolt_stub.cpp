@@ -64,6 +64,7 @@ void PhysicsJolt_CompareTerrainHeightfieldHull(const float start[3], const float
                                                int collision_backend_mode,
                                                int legacy_had_hit, int legacy_synthetic,
                                                float legacy_frac, const float legacy_normal[3],
+                                               float legacy_plane_dist,
                                                int legacy_startsolid, int legacy_allsolid)
 {
 	(void)start;
@@ -74,6 +75,7 @@ void PhysicsJolt_CompareTerrainHeightfieldHull(const float start[3], const float
 	(void)legacy_synthetic;
 	(void)legacy_frac;
 	(void)legacy_normal;
+	(void)legacy_plane_dist;
 	(void)legacy_startsolid;
 	(void)legacy_allsolid;
 

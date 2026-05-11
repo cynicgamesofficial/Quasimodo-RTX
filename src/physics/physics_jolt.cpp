@@ -5,6 +5,7 @@
  */
 
 #include <cstdarg>
+#include <cfloat>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -29,6 +30,11 @@ static physics_jolt_compare_stats_t g_cmp_stats;
 
 static constexpr float kFracEps = 0.01f;
 static constexpr float kNormalDotMin = 0.95f;
+/* Match terrain_collision.cpp TERRAIN_SUPPORT_EPS_Z / TERRAIN_PENETRATE_EPS_Z for probe parity. */
+static constexpr float kSupportEpsZ = 2.0f;
+static constexpr float kPenetrateEpsZ = 4.0f;
+/* Legacy synthetic plane vs Jolt projected center height (compression / triangle vs HF). */
+static constexpr float kSupportHeightDiagTol = 0.125f;
 
 static void PhysicsJolt_Trace(const char *inFMT, ...)
 {
@@ -227,6 +233,83 @@ static bool JoltHullTraceAggregate(const Shape *shape, const float *start, const
 	return true;
 }
 
+static void HullFootprintXYOffsets(const float mins[3], const float maxs[3], float ox[5], float oy[5])
+{
+	ox[0] = 0.5f * (mins[0] + maxs[0]);
+	oy[0] = 0.5f * (mins[1] + maxs[1]);
+	ox[1] = mins[0];
+	oy[1] = mins[1];
+	ox[2] = maxs[0];
+	oy[2] = mins[1];
+	ox[3] = mins[0];
+	oy[3] = maxs[1];
+	ox[4] = maxs[0];
+	oy[4] = maxs[1];
+}
+
+static bool JoltFootprintSupportedProjectOnto(const HeightFieldShape *hf, const float origin_end[3],
+                                              const float mins[3], const float maxs[3],
+                                              float *out_tmin, float *out_tmax)
+{
+	float ox[5], oy[5];
+	HullFootprintXYOffsets(mins, maxs, ox, oy);
+
+	const float bz = origin_end[2] + mins[2];
+	float tmin = FLT_MAX;
+	float tmax = -FLT_MAX;
+
+	for (int i = 0; i < 5; i++) {
+		const float wx = origin_end[0] + ox[i];
+		const float wy = origin_end[1] + oy[i];
+		const Vec3 jlocal = QuakePosToJolt(wx, wy, bz);
+		Vec3 surf;
+		SubShapeID sid;
+		if (!hf->ProjectOntoSurface(jlocal, surf, sid))
+			return false;
+		const float qz = surf.GetY();
+		if (qz < tmin)
+			tmin = qz;
+		if (qz > tmax)
+			tmax = qz;
+	}
+
+	if (out_tmin)
+		*out_tmin = tmin;
+	if (out_tmax)
+		*out_tmax = tmax;
+
+	if (bz > tmax + kSupportEpsZ)
+		return false;
+	if (bz < tmin - kPenetrateEpsZ)
+		return false;
+	return true;
+}
+
+static bool JoltProjectCenterSurfaceQuake(const HeightFieldShape *hf, const float origin_end[3],
+                                         const float mins[3], const float maxs[3],
+                                         float *out_z_quake, Vec3 *out_n_quake)
+{
+	const float wx = origin_end[0] + 0.5f * (mins[0] + maxs[0]);
+	const float wy = origin_end[1] + 0.5f * (mins[1] + maxs[1]);
+	const float bz = origin_end[2] + mins[2];
+	const Vec3 jlocal = QuakePosToJolt(wx, wy, bz);
+	Vec3 surf;
+	SubShapeID sid;
+	if (!hf->ProjectOntoSurface(jlocal, surf, sid))
+		return false;
+
+	if (out_z_quake)
+		*out_z_quake = surf.GetY();
+
+	Vec3 jn = hf->GetSurfaceNormal(sid, surf);
+	Vec3 nq(jn.GetX(), jn.GetZ(), jn.GetY());
+	if (nq.LengthSq() > 1.0e-12f)
+		nq = nq.Normalized();
+	if (out_n_quake)
+		*out_n_quake = nq;
+	return true;
+}
+
 void PhysicsJolt_GetTerrainCompareStats(physics_jolt_compare_stats_t *out)
 {
 	if (!out)
@@ -244,9 +327,11 @@ void PhysicsJolt_CompareTerrainHeightfieldHull(const float start[3], const float
                                                int collision_backend_mode,
                                                int legacy_had_hit, int legacy_synthetic,
                                                float legacy_frac, const float legacy_normal[3],
+                                               float legacy_plane_dist,
                                                int legacy_startsolid, int legacy_allsolid)
 {
 	(void)legacy_allsolid;
+	(void)start;
 	if (collision_backend_mode != 1)
 		return;
 
@@ -276,8 +361,45 @@ void PhysicsJolt_CompareTerrainHeightfieldHull(const float start[3], const float
 
 	if (lh && !jh) {
 		g_cmp_stats.legacy_hit_jolt_miss++;
-		if (legacy_synthetic)
+		if (legacy_synthetic) {
 			g_cmp_stats.legacy_synth_jolt_ray_miss++;
+
+			const Shape *sp = g_terrain_hf_shape.GetPtr();
+			if (sp && sp->GetSubType() == EShapeSubType::HeightField) {
+				const HeightFieldShape *hf = static_cast<const HeightFieldShape *>(sp);
+				const bool jolt_support = JoltFootprintSupportedProjectOnto(hf, end, mins, maxs, nullptr, nullptr);
+				if (jolt_support) {
+					g_cmp_stats.legacy_synth_jolt_support_hit++;
+
+					float jz = 0.f;
+					Vec3 jn_sup(0, 0, 1);
+					if (JoltProjectCenterSurfaceQuake(hf, end, mins, maxs, &jz, &jn_sup)) {
+						const float nx = legacy_normal[0];
+						const float ny = legacy_normal[1];
+						const float nz = legacy_normal[2];
+						const float wx = end[0] + 0.5f * (mins[0] + maxs[0]);
+						const float wy = end[1] + 0.5f * (mins[1] + maxs[1]);
+						if (fabsf(nz) > 1.0e-4f) {
+							const float z_legacy = (legacy_plane_dist - nx * wx - ny * wy) / nz;
+							if (fabsf(jz - z_legacy) > kSupportHeightDiagTol)
+								g_cmp_stats.support_height_mismatch++;
+						}
+
+						Vec3 ln(legacy_normal[0], legacy_normal[1], legacy_normal[2]);
+						if (ln.LengthSq() > 1.0e-12f)
+							ln = ln.Normalized();
+						if (fabsf(jn_sup.Dot(ln)) < kNormalDotMin)
+							g_cmp_stats.support_normal_mismatch++;
+					}
+				} else {
+					g_cmp_stats.legacy_synth_jolt_support_miss++;
+				}
+			} else {
+				g_cmp_stats.legacy_synth_jolt_support_miss++;
+			}
+		} else {
+			g_cmp_stats.ray_legacy_hit_jolt_ray_miss++;
+		}
 	} else if (!lh && jh) {
 		g_cmp_stats.jolt_hit_legacy_miss++;
 	}
@@ -310,4 +432,10 @@ void PhysicsJolt_PrintTerrainDiagnostics(void)
 	             (unsigned long long)s.legacy_hit_jolt_miss, (unsigned long long)s.jolt_hit_legacy_miss,
 	             (unsigned long long)s.frac_mismatch, (unsigned long long)s.normal_mismatch,
 	             (unsigned long long)s.startsolid_mismatch, (unsigned long long)s.legacy_synth_jolt_ray_miss);
+	std::fprintf(stderr, "[JoltPhysics] J2B support probe: ray_legacy>jolt=%llu synth_support_hit=%llu synth_support_miss=%llu "
+	                     "support_dheight=%llu support_dnormal=%llu\n",
+	             (unsigned long long)s.ray_legacy_hit_jolt_ray_miss,
+	             (unsigned long long)s.legacy_synth_jolt_support_hit,
+	             (unsigned long long)s.legacy_synth_jolt_support_miss,
+	             (unsigned long long)s.support_height_mismatch, (unsigned long long)s.support_normal_mismatch);
 }

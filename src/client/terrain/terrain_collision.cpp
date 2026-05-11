@@ -80,7 +80,7 @@ static void terrain_jolt_compare_after_hull(const vec3_t start, const vec3_t end
 
 	PhysicsJolt_CompareTerrainHeightfieldHull(
 		start, end, mins, maxs, mode, legacy_had_hit, legacy_synthetic, legacy_tr->fraction, legacy_tr->plane.normal,
-		legacy_tr->startsolid ? 1 : 0, legacy_tr->allsolid ? 1 : 0);
+		legacy_tr->plane.dist, legacy_tr->startsolid ? 1 : 0, legacy_tr->allsolid ? 1 : 0);
 
 	if (!terrain_debug || !terrain_debug->integer)
 		return;
@@ -93,7 +93,12 @@ static void terrain_jolt_compare_after_hull(const vec3_t start, const vec3_t end
 	const uint64_t d_df = after.frac_mismatch - before.frac_mismatch;
 	const uint64_t d_dn = after.normal_mismatch - before.normal_mismatch;
 	const uint64_t d_syn = after.legacy_synth_jolt_ray_miss - before.legacy_synth_jolt_ray_miss;
-	if (d_ljm + d_jlm + d_df + d_dn + d_syn == 0)
+	const uint64_t d_ray = after.ray_legacy_hit_jolt_ray_miss - before.ray_legacy_hit_jolt_ray_miss;
+	const uint64_t d_sh = after.legacy_synth_jolt_support_hit - before.legacy_synth_jolt_support_hit;
+	const uint64_t d_sm = after.legacy_synth_jolt_support_miss - before.legacy_synth_jolt_support_miss;
+	const uint64_t d_dhz = after.support_height_mismatch - before.support_height_mismatch;
+	const uint64_t d_dnz = after.support_normal_mismatch - before.support_normal_mismatch;
+	if (d_ljm + d_jlm + d_df + d_dn + d_syn + d_ray + d_sh + d_sm + d_dhz + d_dnz == 0)
 		return;
 
 	static unsigned s_dbg_ms = 0;
@@ -107,10 +112,12 @@ static void terrain_jolt_compare_after_hull(const vec3_t start, const vec3_t end
 		return;
 	s_dbg_budget--;
 
-	Com_Printf("[TERRAIN] J2A compare mismatch +%llu legacy>jolt +%llu jolt>legacy +%llu dfrac +%llu dnorm +%llu "
-	           "synth/jolt_miss\n",
+	Com_Printf("[TERRAIN] J2A/J2B compare mismatch +%llu legacy>jolt +%llu jolt>legacy +%llu dfrac +%llu dnorm +%llu "
+	           "synth_ray_miss +%llu ray_miss +%llu sup_hit +%llu sup_miss +%llu sup_dh +%llu sup_dn\n",
 	           (unsigned long long)d_ljm, (unsigned long long)d_jlm, (unsigned long long)d_df,
-	           (unsigned long long)d_dn, (unsigned long long)d_syn);
+	           (unsigned long long)d_dn, (unsigned long long)d_syn, (unsigned long long)d_ray,
+	           (unsigned long long)d_sh, (unsigned long long)d_sm, (unsigned long long)d_dhz,
+	           (unsigned long long)d_dnz);
 }
 
 static void trace_clear_miss(trace_t *tr)

@@ -149,9 +149,9 @@ void TerrainDebug_PrintInfo(void)
     const bool col_active = terrain_enable && terrain_enable->integer && terrain_collision && terrain_collision->integer
         && Terrain_IsLoaded();
     Com_Printf("[TERRAIN] collision active: %s\n", col_active ? "yes" : "no");
-    Com_Printf("[TERRAIN] gameplay terrain collision backend: legacy (authoritative); Jolt never replaces traces in "
-               "J2A\n");
-    Com_Printf("[TERRAIN] jolt_compare active (diagnostics only): %s\n",
+    Com_Printf("[TERRAIN] gameplay terrain collision backend: legacy (authoritative); Jolt compare/support probes do "
+               "not replace traces\n");
+    Com_Printf("[TERRAIN] jolt_compare (backend 1) active: %s (diagnostics only)\n",
                (terrain_collision_backend && terrain_collision_backend->integer == 1) ? "yes" : "no");
 #if defined(QUASIMODO_JOLT_PHYSICS) && QUASIMODO_JOLT_PHYSICS
     Com_Printf("[TERRAIN] Jolt compiled into client: yes\n");
@@ -160,18 +160,26 @@ void TerrainDebug_PrintInfo(void)
     {
         physics_jolt_compare_stats_t s;
         PhysicsJolt_GetTerrainCompareStats(&s);
-        Com_Printf("[TERRAIN] J2A compare counters: total=%llu skipped_unavail=%llu legacy_hit_jolt_miss=%llu "
+        Com_Printf("[TERRAIN] J2A ray compare: total=%llu skipped_unavail=%llu legacy_hit_jolt_miss=%llu "
                    "jolt_hit_legacy_miss=%llu frac_mismatch=%llu normal_mismatch=%llu startsolid_mismatch=%llu "
-                   "legacy_synth_jolt_ray_miss=%llu\n",
+                   "legacy_synth_jolt_ray_miss=%llu ray_legacy_hit_jolt_ray_miss=%llu\n",
                    (unsigned long long)s.compare_total, (unsigned long long)s.compare_skipped_unavailable,
                    (unsigned long long)s.legacy_hit_jolt_miss, (unsigned long long)s.jolt_hit_legacy_miss,
                    (unsigned long long)s.frac_mismatch, (unsigned long long)s.normal_mismatch,
-                   (unsigned long long)s.startsolid_mismatch, (unsigned long long)s.legacy_synth_jolt_ray_miss);
+                   (unsigned long long)s.startsolid_mismatch, (unsigned long long)s.legacy_synth_jolt_ray_miss,
+                   (unsigned long long)s.ray_legacy_hit_jolt_ray_miss);
+        Com_Printf("[TERRAIN] J2B support probe (HeightField ProjectOntoSurface, diagnostic only): "
+                   "legacy_synth_jolt_support_hit=%llu legacy_synth_jolt_support_miss=%llu "
+                   "support_height_mismatch=%llu support_normal_mismatch=%llu\n",
+                   (unsigned long long)s.legacy_synth_jolt_support_hit,
+                   (unsigned long long)s.legacy_synth_jolt_support_miss,
+                   (unsigned long long)s.support_height_mismatch, (unsigned long long)s.support_normal_mismatch);
     }
 #else
     Com_Printf("[TERRAIN] Jolt compiled into client: no (QUASIMODO_JOLT_PHYSICS off at build)\n");
 #endif
-    Com_Printf("[TERRAIN] note: legacy synthetic floor / hull-bottom traces remain authoritative for movement\n");
+    Com_Printf("[TERRAIN] note: movement uses legacy hull-bottom + synthetic floor only; J2B support probe is "
+               "compare-only\n");
     Com_Printf("[TERRAIN] collision mode: hull-bottom heightfield segment + footprint ground-support (no full swept "
                "OBB walls)\n");
     Com_Printf("[TERRAIN] dedicated server terrain collision: follow terrain_collision + loaded jungle; SV-only "
