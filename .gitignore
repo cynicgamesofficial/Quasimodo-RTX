@@ -100,5 +100,8 @@ dlss_script_setup_*
 Third Parties/RTXDI/
 Third Parties/RTXDI/**
 
+# JoltPhysics local/script-managed dependency
+Third Parties/JoltPhysics/
+
 # Local Cursor / editor workspace files may contain machine-specific paths
 *.code-workspace

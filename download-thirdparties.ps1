@@ -218,4 +218,51 @@ Remove-Item -Path $StagingRoot -Recurse -Force
 
 Write-Host "[INFO] NRD: done. SDK at: $NrdTargetDir"
 Write-Host "[INFO] NRI: done. SDK at: $NriTargetDir"
+
+# --- JoltPhysics (official upstream clone only — not built by this script; ignored by git)
+$JoltRepoUrl   = "https://github.com/jrouwe/JoltPhysics.git"
+$JoltTargetDir = Join-Path $RepoRoot "Third Parties\JoltPhysics"
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "JoltPhysics: git is required to clone or verify the repository."
+    exit 1
+}
+
+if (Test-Path $JoltTargetDir) {
+    $gitMarker = Join-Path $JoltTargetDir ".git"
+    if (-not (Test-Path $gitMarker)) {
+        Write-Error "JoltPhysics: path exists but is not a git clone (missing .git): $JoltTargetDir"
+        exit 1
+    }
+    $remoteLines = @(git -C $JoltTargetDir remote -v 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "JoltPhysics: failed to read git remotes for $JoltTargetDir"
+        exit 1
+    }
+    $remoteBlob = $remoteLines -join "`n"
+    if ($remoteBlob -notmatch 'jrouwe/JoltPhysics') {
+        Write-Error "JoltPhysics: remotes must reference jrouwe/JoltPhysics. Got:`n$remoteBlob"
+        exit 1
+    }
+    $joltShort = (git -C $JoltTargetDir rev-parse --short HEAD 2>$null).Trim()
+    if ([string]::IsNullOrWhiteSpace($joltShort)) {
+        Write-Error "JoltPhysics: could not read HEAD commit for $JoltTargetDir"
+        exit 1
+    }
+    Write-Host "[INFO] JoltPhysics: existing clone OK at $JoltTargetDir (commit $joltShort); no automatic pull."
+} else {
+    Write-Host "[INFO] JoltPhysics: cloning $JoltRepoUrl -> $JoltTargetDir"
+    $parentJolt = Split-Path -Parent $JoltTargetDir
+    if (-not (Test-Path $parentJolt)) {
+        New-Item -ItemType Directory -Path $parentJolt -Force | Out-Null
+    }
+    & git clone $JoltRepoUrl $JoltTargetDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "JoltPhysics: git clone failed."
+        exit 1
+    }
+    $joltShortNew = (git -C $JoltTargetDir rev-parse --short HEAD 2>$null).Trim()
+    Write-Host "[INFO] JoltPhysics: cloned OK (commit $joltShortNew)"
+}
+
 Write-Host "[INFO] All third-party downloads finished."
